@@ -52,6 +52,7 @@ fun AlarmListScreen(
     onOpenSettings: () -> Unit,
     onOpenHistory: () -> Unit,
     onOpenSleepTracking: () -> Unit,
+    onOpenHelp: () -> Unit,
     viewModel: AlarmListViewModel = hiltViewModel()
 ) {
     val alarms by viewModel.alarms.collectAsState(initial = emptyList())
@@ -131,6 +132,9 @@ fun AlarmListScreen(
                                 Icon(Icons.Default.Delete, contentDescription = "Удалить выбранные", tint = MaterialTheme.colorScheme.error)
                             }
                         } else {
+                            IconButton(onClick = onOpenHelp) {
+                                Icon(Icons.Default.HelpOutline, contentDescription = "Инструкция и возможности")
+                            }
                             IconButton(onClick = onOpenHistory) {
                                 Icon(Icons.Default.History, contentDescription = "История сна")
                             }

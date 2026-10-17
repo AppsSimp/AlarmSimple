@@ -53,13 +53,6 @@ fun SleepTrackingScreen(
         }
     }
 
-    // Если трекинг выключен, автоматически закрываем экран
-    LaunchedEffect(isTracking) {
-        if (!isTracking) {
-            onNavigateBack()
-        }
-    }
-
     // Мягкая пульсирующая анимация сна
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val pulseScale by infiniteTransition.animateFloat(
