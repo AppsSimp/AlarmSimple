@@ -29,8 +29,29 @@ class BootReceiver : BroadcastReceiver() {
 
                     for (alarm in activeAlarms) {
                         if (alarm.mode == AlarmMode.CLASSIC.name && alarm.targetTimeMs != null) {
-                            var target = alarm.targetTimeMs
-                            if (target > now) {
+                            val repeatDays = runCatching {
+                                val arr = org.json.JSONArray(alarm.repeatDays)
+                                (0 until arr.length()).map { arr.getInt(it) }.toSet()
+                            }.getOrDefault(emptySet())
+
+                            val target = if (alarm.targetTimeMs > now) {
+                                alarm.targetTimeMs
+                            } else if (repeatDays.isNotEmpty()) {
+                                val cal = java.util.Calendar.getInstance().apply { timeInMillis = alarm.targetTimeMs }
+                                val next = alarmScheduler.calculateNextTriggerTime(
+                                    hour = cal.get(java.util.Calendar.HOUR_OF_DAY),
+                                    minute = cal.get(java.util.Calendar.MINUTE),
+                                    repeatDays = repeatDays
+                                )
+                                alarmDao.updateAlarm(alarm.copy(targetTimeMs = next))
+                                next
+                            } else {
+                                // Разовый будильник в прошлом - выключаем
+                                alarmDao.setAlarmActive(alarm.id, false)
+                                null
+                            }
+
+                            if (target != null) {
                                 alarmScheduler.scheduleAlarm(target, alarm.id)
                             }
                         }

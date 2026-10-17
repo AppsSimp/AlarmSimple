@@ -162,6 +162,9 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                     questType = questTypeState.value,
                     isQuestActive = isQuestActiveState.value,
                     expectedBarcode = expectedBarcode,
+                    onStartQuestNow = {
+                        isQuestActiveState.value = true
+                    },
                     onGive5Minutes = {
                         isQuestActiveState.value = true
                         val intent = Intent(this@AlarmRingingActivity, AlarmFiringService::class.java).apply {
@@ -294,6 +297,7 @@ fun AlarmRingingScreenContent(
     questType: QuestType,
     isQuestActive: Boolean,
     expectedBarcode: String?,
+    onStartQuestNow: () -> Unit,
     onGive5Minutes: () -> Unit,
     onDismiss: () -> Unit,
     onSnooze: () -> Unit,
@@ -380,13 +384,22 @@ fun AlarmRingingScreenContent(
                 ) {
                     if (questType != QuestType.NONE) {
                         Button(
-                            onClick = onGive5Minutes,
+                            onClick = onStartQuestNow,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .height(56.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                         ) {
-                            Text(stringResource(R.string.give_5_minutes), fontSize = 18.sp)
+                            Text("Выполнить квест сейчас", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        OutlinedButton(
+                            onClick = onGive5Minutes,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(52.dp)
+                        ) {
+                            Text(stringResource(R.string.give_5_minutes), fontSize = 16.sp)
                         }
                     } else {
                         Button(
