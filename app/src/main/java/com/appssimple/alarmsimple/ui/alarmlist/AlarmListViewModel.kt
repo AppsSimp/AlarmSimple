@@ -46,8 +46,18 @@ class AlarmListViewModel @Inject constructor(
             if (alarm != null) {
                 val target = alarm.targetTimeMs
                 if (isActive && target != null) {
-                    val now = System.currentTimeMillis()
-                    val nextTrigger = if (target > now) target else target + 24 * 60 * 60 * 1000L
+                    val repeatDays = runCatching {
+                        val arr = org.json.JSONArray(alarm.repeatDays)
+                        (0 until arr.length()).map { arr.getInt(it) }.toSet()
+                    }.getOrDefault(emptySet())
+
+                    val cal = java.util.Calendar.getInstance().apply { timeInMillis = target }
+                    val nextTrigger = alarmScheduler.calculateNextTriggerTime(
+                        hour = cal.get(java.util.Calendar.HOUR_OF_DAY),
+                        minute = cal.get(java.util.Calendar.MINUTE),
+                        repeatDays = repeatDays
+                    )
+                    alarmDao.updateAlarm(alarm.copy(targetTimeMs = nextTrigger, isActive = true))
                     alarmScheduler.scheduleAlarm(nextTrigger, alarm.id)
                 } else {
                     alarmScheduler.cancelAlarm(alarm.id)

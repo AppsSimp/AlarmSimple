@@ -35,6 +35,7 @@ import javax.inject.Inject
 class AlarmFiringService : Service() {
 
     @Inject lateinit var alarmDao: AlarmDao
+    @Inject lateinit var alarmScheduler: AlarmScheduler
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var mediaPlayer: MediaPlayer? = null
@@ -243,6 +244,33 @@ class AlarmFiringService : Service() {
                 action = SleepTrackingService.ACTION_STOP_TRACKING
             }
             startService(stopTrackingIntent)
+        }
+
+        // Handle alarm recurrence or deactivation
+        if (currentAlarmId > 0) {
+            serviceScope.launch {
+                val alarm = alarmDao.getAlarmById(currentAlarmId)
+                if (alarm != null) {
+                    val repeatDays = runCatching {
+                        val arr = org.json.JSONArray(alarm.repeatDays)
+                        (0 until arr.length()).map { arr.getInt(it) }.toSet()
+                    }.getOrDefault(emptySet())
+
+                    if (repeatDays.isNotEmpty() && alarm.targetTimeMs != null) {
+                        val cal = java.util.Calendar.getInstance().apply { timeInMillis = alarm.targetTimeMs }
+                        val nextTrigger = alarmScheduler.calculateNextTriggerTime(
+                            hour = cal.get(java.util.Calendar.HOUR_OF_DAY),
+                            minute = cal.get(java.util.Calendar.MINUTE),
+                            repeatDays = repeatDays
+                        )
+                        alarmDao.updateAlarm(alarm.copy(targetTimeMs = nextTrigger, isActive = true))
+                        alarmScheduler.scheduleAlarm(nextTrigger, alarm.id)
+                    } else if (repeatDays.isEmpty()) {
+                        // Разовый будильник после срабатывания деактивируется
+                        alarmDao.setAlarmActive(alarm.id, false)
+                    }
+                }
+            }
         }
 
         stopForeground(STOP_FOREGROUND_REMOVE)

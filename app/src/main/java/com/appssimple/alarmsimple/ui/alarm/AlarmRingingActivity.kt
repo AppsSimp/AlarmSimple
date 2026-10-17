@@ -251,7 +251,25 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                 }
             }
         }
+        if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+            // Запрещаем закрывать экран будильника назад, если есть квест или сирена
+            if (questTypeState.value != QuestType.NONE || isSirenState.value) {
+                return true
+            }
+        }
         return super.dispatchKeyEvent(event)
+    }
+
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        // Если пользователь нажал Home / свайпнул вверх свернуть приложение во время активного квеста
+        if (questTypeState.value != QuestType.NONE || isSirenState.value) {
+            val reopenIntent = Intent(this, AlarmRingingActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
+                putExtra(AlarmFiringService.EXTRA_ALARM_ID, intent.getLongExtra(AlarmFiringService.EXTRA_ALARM_ID, -1L))
+            }
+            startActivity(reopenIntent)
+        }
     }
 
     private fun dismissAndFinish() {

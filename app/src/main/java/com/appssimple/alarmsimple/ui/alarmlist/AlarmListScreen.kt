@@ -165,26 +165,48 @@ fun AlarmListScreen(
                 ) {
                     Column(
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier.padding(32.dp)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(20.dp)
                     ) {
+                        // Карточка быстрого запуска сна даже когда нет будильников
+                        QuickSleepCard(
+                            onStartSleep = {
+                                val intent = Intent(context, SleepTrackingService::class.java).apply {
+                                    action = SleepTrackingService.ACTION_START_TRACKING
+                                    putExtra(SleepTrackingService.EXTRA_ALARM_ID, -1L)
+                                }
+                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                    context.startForegroundService(intent)
+                                } else {
+                                    context.startService(intent)
+                                }
+                                scope.launch {
+                                    snackbarHostState.showSnackbar("Трекинг сна без будильника запущен. Спокойной ночи!")
+                                }
+                            }
+                        )
+
+                        Spacer(Modifier.height(40.dp))
+
                         Box(
                             modifier = Modifier
-                                .size(90.dp)
+                                .size(80.dp)
                                 .clip(CircleShape)
                                 .background(BrandPrimary.copy(alpha = 0.12f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Icon(Icons.Default.Bedtime, contentDescription = null, tint = BrandPrimary, modifier = Modifier.size(48.dp))
+                            Icon(Icons.Default.Alarm, contentDescription = null, tint = BrandPrimary, modifier = Modifier.size(40.dp))
                         }
-                        Spacer(Modifier.height(20.dp))
+                        Spacer(Modifier.height(16.dp))
                         Text(
-                            text = "Нет активных будильников",
+                            text = "Нет будильников",
                             style = MaterialTheme.typography.titleLarge,
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "Нажмите кнопку ниже, чтобы настроить умный подъем по фазам сна или обычный будильник.",
+                            text = "Вы можете отслеживать фазы сна без будильника выше или нажать кнопку ниже, чтобы добавить новый будильник.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = androidx.compose.ui.text.style.TextAlign.Center
@@ -419,16 +441,43 @@ fun AlarmItemCard(
                     )
                 }
 
-                Spacer(Modifier.height(8.dp))
-
-                // Badges
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (alarm.smartWakeEnabled) {
-                        ModernBadge(text = "Умное окно: ±${alarm.smartWakeWindowMinutes}м", color = BrandPrimary)
+                    val repeatDays = remember(alarm.repeatDays) {
+                        runCatching {
+                            val arr = org.json.JSONArray(alarm.repeatDays)
+                            (0 until arr.length()).map { arr.getInt(it) }.toSet()
+                        }.getOrDefault(emptySet())
                     }
+
+                    if (repeatDays.isNotEmpty()) {
+                        val daysText = if (repeatDays.size == 7) {
+                            "Каждый день"
+                        } else if (repeatDays == setOf(1, 2, 3, 4, 5)) {
+                            "По будням"
+                        } else if (repeatDays == setOf(6, 7)) {
+                            "По выходным"
+                        } else {
+                            val names = listOf("Пн", "Вт", "Ср", "Чт", "Пт", "Сб", "Вс")
+                            repeatDays.sorted().joinToString(", ") { names[it - 1] }
+                        }
+                        Text(
+                            text = daysText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Spacer(Modifier.height(4.dp))
+                    }
+
+                    Spacer(Modifier.height(4.dp))
+
+                    // Badges
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (alarm.smartWakeEnabled) {
+                            ModernBadge(text = "Умное окно: ±${alarm.smartWakeWindowMinutes}м", color = BrandPrimary)
+                        }
                     if (alarm.questType != "NONE") {
                         val questLabel = when (alarm.questType) {
                             "NFC" -> "NFC"

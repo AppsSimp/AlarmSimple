@@ -37,6 +37,7 @@ data class AlarmSetupUiState(
     val sirenEnabled: Boolean = false,
     val volumeLockEnabled: Boolean = false,
     val snoozeMinutes: Int = 5,
+    val repeatDays: Set<Int> = emptySet(), // 1=Пн, 2=Вт, ..., 7=Вс
     val ringtoneUri: String? = null,
     val ringtoneTitle: String = "По умолчанию (Системный)",
     val isActive: Boolean = true,
@@ -99,6 +100,11 @@ class AlarmSetupViewModel @Inject constructor(
                 cal.timeInMillis = alarm.targetTimeMs
             }
 
+            val repeatDays = runCatching {
+                val arr = org.json.JSONArray(alarm.repeatDays)
+                (0 until arr.length()).map { arr.getInt(it) }.toSet()
+            }.getOrDefault(emptySet())
+
             val ringtoneTitle = if (alarm.ringtoneUri != null) {
                 try {
                     val ringtone = RingtoneManager.getRingtone(context, Uri.parse(alarm.ringtoneUri))
@@ -122,6 +128,7 @@ class AlarmSetupViewModel @Inject constructor(
                     sirenEnabled = alarm.sirenEnabled,
                     volumeLockEnabled = alarm.volumeLockEnabled,
                     snoozeMinutes = alarm.snoozeDurationMinutes,
+                    repeatDays = repeatDays,
                     ringtoneUri = alarm.ringtoneUri,
                     ringtoneTitle = ringtoneTitle,
                     isActive = alarm.isActive,
@@ -129,6 +136,17 @@ class AlarmSetupViewModel @Inject constructor(
                     isLoading = false
                 )
             }
+        }
+    }
+
+    fun toggleRepeatDay(day: Int) {
+        _uiState.update { current ->
+            val updated = if (current.repeatDays.contains(day)) {
+                current.repeatDays - day
+            } else {
+                current.repeatDays + day
+            }
+            current.copy(repeatDays = updated)
         }
     }
 
@@ -164,16 +182,14 @@ class AlarmSetupViewModel @Inject constructor(
             try {
                 val state = _uiState.value
                 val targetTimeMs = if (state.mode == AlarmMode.CLASSIC) {
-                    Calendar.getInstance().apply {
-                        set(Calendar.HOUR_OF_DAY, state.targetHour)
-                        set(Calendar.MINUTE, state.targetMinute)
-                        set(Calendar.SECOND, 0)
-                        set(Calendar.MILLISECOND, 0)
-                        if (timeInMillis <= System.currentTimeMillis()) {
-                            add(Calendar.DAY_OF_YEAR, 1)
-                        }
-                    }.timeInMillis
+                    alarmScheduler.calculateNextTriggerTime(
+                        hour = state.targetHour,
+                        minute = state.targetMinute,
+                        repeatDays = state.repeatDays
+                    )
                 } else null
+
+                val repeatDaysJson = org.json.JSONArray(state.repeatDays.toList()).toString()
 
                 val baseEntity = AlarmEntity(
                     id = state.alarmId ?: 0L,
@@ -187,6 +203,7 @@ class AlarmSetupViewModel @Inject constructor(
                     sirenEnabled = state.sirenEnabled,
                     volumeLockEnabled = state.volumeLockEnabled,
                     snoozeDurationMinutes = state.snoozeMinutes,
+                    repeatDays = repeatDaysJson,
                     ringtoneUri = state.ringtoneUri,
                     isActive = state.isActive,
                     label = state.label

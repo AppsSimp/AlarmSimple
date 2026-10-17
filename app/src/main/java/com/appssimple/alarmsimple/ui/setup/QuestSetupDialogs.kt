@@ -142,7 +142,7 @@ fun NfcSetupDialog(
                     }
                 } else {
                     Text(
-                        text = "Поднесите телефон задней крышкой к любой NFC-метке (брелок, наклейка, проездной, банковская карта).",
+                        text = "Поднесите телефон задней крышкой к любой NFC-метке или даже к обычной бесконтактной банковской карте (МИР, Visa, Mastercard, проездной).",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center

@@ -46,7 +46,9 @@ import com.appssimple.alarmsimple.ui.components.AppBackground
 import com.appssimple.alarmsimple.ui.components.ModernBadge
 import com.appssimple.alarmsimple.ui.components.ModernCard
 import com.appssimple.alarmsimple.ui.theme.BrandPrimary
+import com.appssimple.alarmsimple.ui.theme.BrandPrimaryLight
 import com.appssimple.alarmsimple.ui.theme.BrandSecondary
+import com.appssimple.alarmsimple.ui.theme.BrandRose
 import com.appssimple.alarmsimple.ui.theme.PrimaryGradient
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -269,6 +271,76 @@ fun AlarmSetupScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
+
+                            Spacer(Modifier.height(14.dp))
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                            Spacer(Modifier.height(14.dp))
+
+                            // Выбор дней повторения
+                            Text(
+                                text = "Повторять по дням",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Spacer(Modifier.height(8.dp))
+
+                            val days = listOf(
+                                1 to "Пн",
+                                2 to "Вт",
+                                3 to "Ср",
+                                4 to "Чт",
+                                5 to "Пт",
+                                6 to "Сб",
+                                7 to "Вс"
+                            )
+
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                days.forEach { (dayNum, dayLabel) ->
+                                    val isSelected = state.repeatDays.contains(dayNum)
+                                    val isWeekend = dayNum >= 6
+                                    Box(
+                                        modifier = Modifier
+                                            .size(40.dp)
+                                            .clip(CircleShape)
+                                            .background(
+                                                when {
+                                                    isSelected -> BrandPrimary
+                                                    else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                                                }
+                                            )
+                                            .clickable { viewModel.toggleRepeatDay(dayNum) },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = dayLabel,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            fontSize = 13.sp,
+                                            color = when {
+                                                isSelected -> Color.White
+                                                isWeekend -> MaterialTheme.colorScheme.error.copy(alpha = 0.8f)
+                                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+
+                            Spacer(Modifier.height(8.dp))
+                            val repeatSummary = when {
+                                state.repeatDays.isEmpty() -> "Один раз (без повтора)"
+                                state.repeatDays.size == 7 -> "Каждый день"
+                                state.repeatDays == setOf(1, 2, 3, 4, 5) -> "Только по будням (Пн-Пт)"
+                                state.repeatDays == setOf(6, 7) -> "Только по выходным (Сб-Вс)"
+                                else -> "Выбрано дней: ${state.repeatDays.size}"
+                            }
+                            Text(
+                                text = repeatSummary,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = BrandPrimaryLight
+                            )
                         } else {
                             Column(
                                 modifier = Modifier.fillMaxWidth(),
@@ -355,7 +427,7 @@ fun AlarmSetupScreen(
                     }
                 }
 
-                // Умное пробуждение
+                // Умное пробуждение (Компактный аккуратный блок)
                 ModernCard {
                     Column {
                         Row(
@@ -363,28 +435,44 @@ fun AlarmSetupScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Умное окно пробуждения", style = MaterialTheme.typography.titleMedium)
-                                Text(
-                                    "Будит в фазе легкого сна при ворочании",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                            Row(
+                                modifier = Modifier.weight(1f),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .clip(CircleShape)
+                                        .background(BrandPrimary.copy(alpha = 0.15f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    Icon(Icons.Default.Bedtime, contentDescription = null, tint = BrandPrimary, modifier = Modifier.size(18.dp))
+                                }
+                                Spacer(Modifier.width(10.dp))
+                                Column {
+                                    Text("Умное пробуждение", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                                    Text(
+                                        "В фазе легкого сна в окне ${state.smartWakeWindowMinutes} мин",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
                             }
+
                             Switch(
                                 checked = state.smartWakeEnabled,
-                                onCheckedChange = viewModel::setSmartWakeEnabled
+                                onCheckedChange = viewModel::setSmartWakeEnabled,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = BrandPrimary,
+                                    uncheckedThumbColor = Color.White,
+                                    uncheckedTrackColor = Color(0xFF2A344E)
+                                )
                             )
                         }
 
                         if (state.smartWakeEnabled) {
-                            Spacer(Modifier.height(14.dp))
-                            Text(
-                                text = "Диапазон поиска легкой фазы:",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(10.dp))
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -393,7 +481,7 @@ fun AlarmSetupScreen(
                                     FilterChip(
                                         selected = state.smartWakeWindowMinutes == window,
                                         onClick = { viewModel.setSmartWakeWindow(window) },
-                                        label = { Text("за $window мин") }
+                                        label = { Text("±$window мин", fontSize = 12.sp) }
                                     )
                                 }
                             }
@@ -410,13 +498,13 @@ fun AlarmSetupScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
-                        Spacer(Modifier.height(12.dp))
+                        Spacer(Modifier.height(10.dp))
 
                         val quests = listOf(
                             QuestType.NONE to "Без квеста (стандартно)",
-                            QuestType.MATH to "Блиц-математика (3 примера)",
-                            QuestType.BARCODE to "Штрихкод предмета",
-                            QuestType.NFC to "NFC-метка (в другой комнате)"
+                            QuestType.MATH to "Математика",
+                            QuestType.BARCODE to "Штрихкод",
+                            QuestType.NFC to "NFC-метка (или банковская карта)"
                         )
 
                         quests.forEach { (type, title) ->
@@ -430,7 +518,11 @@ fun AlarmSetupScreen(
                                     .padding(horizontal = 8.dp, vertical = 6.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                RadioButton(selected = selected, onClick = { viewModel.setQuestType(type) })
+                                RadioButton(
+                                    selected = selected,
+                                    onClick = { viewModel.setQuestType(type) },
+                                    colors = RadioButtonDefaults.colors(selectedColor = BrandPrimary)
+                                )
                                 Spacer(Modifier.width(8.dp))
                                 Text(title, style = MaterialTheme.typography.bodyLarge)
                             }
@@ -607,7 +699,13 @@ fun AlarmSetupScreen(
                             }
                             Switch(
                                 checked = state.sirenEnabled,
-                                onCheckedChange = viewModel::setSirenEnabled
+                                onCheckedChange = viewModel::setSirenEnabled,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = BrandRose,
+                                    uncheckedThumbColor = Color.White,
+                                    uncheckedTrackColor = Color(0xFF2A344E)
+                                )
                             )
                         }
 
@@ -628,7 +726,13 @@ fun AlarmSetupScreen(
                             }
                             Switch(
                                 checked = state.volumeLockEnabled,
-                                onCheckedChange = viewModel::setVolumeLockEnabled
+                                onCheckedChange = viewModel::setVolumeLockEnabled,
+                                colors = SwitchDefaults.colors(
+                                    checkedThumbColor = Color.White,
+                                    checkedTrackColor = BrandPrimary,
+                                    uncheckedThumbColor = Color.White,
+                                    uncheckedTrackColor = Color(0xFF2A344E)
+                                )
                             )
                         }
                     }
