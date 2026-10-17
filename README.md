@@ -1,84 +1,93 @@
 # 🔔 AlarmSimple
 
-**Free, open-source smart alarm clock** with real sleep tracking, smart wake-up in light sleep phase, and configurable dismissal difficulty — from a simple button to NFC tags, barcode scanning, and math quests.
+<p align="center">
+  <b>Бесплатный умный будильник с открытым исходным кодом</b><br>
+  Трекинг реального сна, умное пробуждение в легкую фазу, запись ночных звуков и квесты любой сложности.
+</p>
 
-No ads. No tracking. No subscription.
+<p align="center">
+  <b>Русский</b> | <a href="README_EN.md">English</a>
+</p>
 
-## ✨ Features
+<p align="center">
+  <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License">
+  <img src="https://img.shields.io/badge/Platform-Android-green.svg" alt="Platform">
+  <img src="https://img.shields.io/badge/Kotlin-2.1-purple.svg" alt="Kotlin">
+  <img src="https://img.shields.io/badge/No_Ads-100%25-brightgreen.svg" alt="No Ads">
+</p>
 
-### Two Alarm Modes
-- **Classic** — Set a specific wake-up time (e.g., 7:00 AM)
-- **Sleep Duration** — Set how long you want to sleep (e.g., 7.5 hours). The app detects when you actually fall asleep via microphone + accelerometer and starts the timer from that moment.
+---
 
-### 🧠 Smart Wake-Up (optional)
-- Define a wake window around your target time (e.g., 30 minutes before)
-- The app monitors your sleep phases and wakes you during light sleep
-- If no light phase is detected, the alarm fires at the window boundary
-- Gradual sound increase for a gentle wake-up
+**AlarmSimple** — это умный будильник без рекламы, подписок и трекеров. Приложение помогает легче просыпаться за счет анализа физиологических циклов и гарантированно поднимает с кровати с помощью системы заданий (квестов) и защиты от отключения звука.
 
-### 🎯 Dismissal Quests (optional)
-Choose your difficulty:
-- **NFC Tag** — Walk to another room and tap your phone to a tag
-- **Barcode** — Scan a specific product (e.g., toothpaste in the bathroom)
-- **Math Blitz** — Solve 3 problems (15 seconds each; mistakes reset progress)
+---
 
-### 🚨 Siren Mode
-- Activates if you don't complete the quest within 5 minutes
-- Maximum volume, no dismiss button — only the quest can stop it
-- Optional hardware volume lock (prevents lowering volume)
+## ✨ Основные возможности
 
-### 📊 Morning Statistics
-- Hypnogram showing sleep phases throughout the night
-- When you actually fell asleep
-- Total sleep duration and efficiency
-- Movement and snoring data
+### 1. Два режима установки (на выбор)
+* **По длительности сна:** укажите, сколько нужно поспать (например, 7.5 часов). Приложение мониторит затихание звуков и отсутствие движений — таймер сна запускается **только после реального засыпания**.
+* **Классический:** привычный будильник на точное время (например, на 7:00).
 
-## 🏗️ Tech Stack
+### 2. Умное окно пробуждения (Smart Wake-Up)
+* Задается диапазон времени (например, за 15–45 минут до целевого времени).
+* Внутри этого окна алгоритм отслеживает выход из глубокого сна в легкую фазу (появление микродвижений и шорохов) и включает мягко нарастающий сигнал.
+* Если движений не было, будильник сработает ровно в крайнюю точку времени.
 
-| Component | Technology |
-|---|---|
-| Language | Kotlin |
-| UI | Jetpack Compose + Material 3 |
-| Architecture | Clean Architecture + MVVM |
-| DI | Hilt |
-| Database | Room |
-| Preferences | DataStore |
-| Barcode | ML Kit |
-| Camera | CameraX |
-| Charts | Vico |
-| Min SDK | 26 (Android 8.0) |
+### 3. Квесты на пробуждение
+Если включены задания, обычная кнопка выключения отсутствует — доступна только кнопка **«Дать 5 минут»**, которая временно глушит звук:
+* **NFC-метка:** дойти до другой комнаты или ванной и приложить телефон к метке.
+* **Штрихкод:** отсканировать камерой выбранный предмет (например, зубную пасту).
+* **Блиц-математика:** решить 3 примера в уме (по 15 секунд на каждый; любая ошибка или тайм-аут сбрасывают прогресс).
 
-## 🧪 Sleep Tracking — How It Works
+### 4. Режим сирены и защита от выключения
+* Если за 5 минут квест не выполнен — включается оглушительная сирена на максимальной громкости.
+* Кнопки с экрана исчезают: звук отключается **только** после честного выполнения задания.
+* **Блокировка громкости:** качелька громкости аппаратно блокируется на 100%.
 
-The app uses two sensors to track your sleep:
+### 5. Утренняя статистика и ночные звуки
+* **Наглядная гипнограмма:** график сна с разделением на фазы (Глубокий, Легкий, REM, Пробуждения).
+* **Интересные звуки ночью:** встроенный умный диктофон сохраняет короткие аудиоклипы (храп, разговоры во сне, кашель, необычные звуки). Их можно прослушать прямо в приложении.
+* **Защита от ложных записей:** если вы засыпаете под фильм, сериал или подкаст, система распознает постоянный внешний звук и не спамит записями.
 
-**Accelerometer (primary)** — Phone on the mattress picks up body movements. Movement Intensity (MI) is computed per 30-second epoch and classified into sleep phases.
+---
 
-**Microphone (secondary)** — Burst recording (10s on / 20s off) analyzes ambient sound. Detects silence (sleep onset), snoring (deep sleep), and speech (wakefulness). No audio is ever stored.
+## 🔬 Как работает трекинг сна
 
-| Metric | Expected Accuracy |
-|---|---|
-| Sleep/Wake detection | ~90–95% |
-| Light vs Deep sleep | ~70–80% |
-| REM detection | ~55–65% |
-| Smart wake timing | ~85–90% |
+Приложение использует технологию **Sensor Fusion** (объединение сенсоров):
+* **Акселерометр (основной сенсор):** телефон кладется на матрас рядом с подушкой. Датчик собирает микровибрации с частотой 5 Гц через аппаратный FIFO-буфер (не нагружая процессор и экономя батарею). На основе изменения ускорений рассчитывается показатель *Movement Intensity* за 30-секундные эпохи.
+* **Микрофон (дополнительный сенсор):** работает через цикличный буфер в оперативной памяти. Анализирует спектр звука (RMS + частоты) для определения дыхания, храпа или разговоров.
 
-## 📱 Supported Languages
+| Показатель | Ожидаемая точность | Описание |
+|---|---|---|
+| Детекция сна/бодрствования | **~90–95%** | Фиксация реального засыпания и пробуждений |
+| Выход в легкую фазу (Smart Wake) | **~85–90%** | Отслеживание момента смены фазы для комфортного подъема |
+| Разделение легкий / глубокий сон | **~70–80%** | Анализ двигательной активности тела |
 
-- 🇬🇧 English (default)
-- 🇷🇺 Russian
+---
 
-## 🔒 Privacy
+## 🔒 Приватность и батарея
 
-- **No internet permission** — the app works completely offline
-- **No audio stored** — microphone data is processed in real-time and discarded
-- **No analytics or tracking** — your sleep data stays on your device
-- **Open source** — verify it yourself
+* **100% Offline:** в приложении нет разрешения на доступ в интернет (`INTERNET`). Ваши данные и звуки никогда не покинут устройство.
+* **Экономия памяти:** непрерывная 8-часовая аудиозапись не ведется. Сохраняются только редкие короткие клипы (по 10–12 сек) в сжатом формате AAC (~30 КБ на клип).
+* **Экономия аккумулятора:** батчинг сенсоров и частичный режим сна процессора обеспечивают расход всего **~8–15% за 8 часов ночи**.
 
-## 📄 License
+---
 
-MIT License — see [LICENSE](LICENSE)
+## 🛠️ Стек технологий
 
-## 🤝 Contributing
+* **Язык:** Kotlin 2.1
+* **UI:** Jetpack Compose + Material 3 (поддержка динамических цветов и системной темы)
+* **Архитектура:** Clean Architecture + MVVM
+* **DI:** Dagger Hilt
+* **База данных:** Room Database
+* **Настройки:** Jetpack DataStore Preferences
+* **Сканер штрихкодов:** Google ML Kit Barcode Scanning + CameraX
+* **Сборка:** Gradle Version Catalogs (Kotlin DSL)
+* **Минимальная версия:** Android 8.0 (API 26)
+* **Целевая версия:** Android 15 (API 35)
 
-Contributions are welcome! Please open an issue first to discuss what you'd like to change.
+---
+
+## 📄 Лицензия
+
+Проект распространяется под свободной лицензией **MIT**. Подробности в файле [LICENSE](LICENSE).
