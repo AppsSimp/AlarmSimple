@@ -59,6 +59,15 @@ fun AlarmListScreen(
     val selectedIds by viewModel.selectedAlarmIds.collectAsState()
     val isSelectionMode = selectedIds.isNotEmpty()
 
+    val coachMarksShown by viewModel.coachMarksShown.collectAsState(initial = true)
+    var currentCoachStep by remember { mutableIntStateOf(0) } // 0: off, 1: Sleep card, 2: Help icon, 3: Add button
+
+    LaunchedEffect(coachMarksShown) {
+        if (!coachMarksShown) {
+            currentCoachStep = 1
+        }
+    }
+
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
@@ -310,6 +319,130 @@ fun AlarmListScreen(
                 }
             }
         }
+        
+        if (currentCoachStep > 0) {
+            CoachMarksOverlay(
+                step = currentCoachStep,
+                onNext = {
+                    if (currentCoachStep < 3) {
+                        currentCoachStep++
+                    } else {
+                        currentCoachStep = 0
+                        viewModel.dismissCoachMarks()
+                    }
+                },
+                onDismiss = {
+                    currentCoachStep = 0
+                    viewModel.dismissCoachMarks()
+                }
+            )
+        }
+    }
+}
+
+@Composable
+fun CoachMarksOverlay(
+    step: Int,
+    onNext: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.72f))
+            .clickable(onClick = { /* block clicks underneath */ })
+            .padding(24.dp)
+    ) {
+        val title: String
+        val description: String
+        val alignment: Alignment
+
+        when (step) {
+            1 -> {
+                title = "🌙 Режим «Баиньки»"
+                description = "Хотите отслеживать фазы сна без звукового будильника? Нажмите эту карточку прямо перед сном — умный трекинг запишет фазы сна и пробуждения."
+                alignment = Alignment.TopCenter
+            }
+            2 -> {
+                title = "❓ Справочник и подсказки"
+                description = "Здесь собрана интерактивная инструкция со всеми фишками: как привязать банковскую карту к NFC, сканировать штрихкод или настроить умное окно пробуждения."
+                alignment = Alignment.TopEnd
+            }
+            3 -> {
+                title = "➕ Создание умного будильника"
+                description = "Нажмите здесь, чтобы создать будильник с мягким пробуждением в лёгкой фазе сна, квестами и сиреной, которую нельзя заглушить кнопками громкости."
+                alignment = Alignment.BottomCenter
+            }
+            else -> {
+                title = ""
+                description = ""
+                alignment = Alignment.Center
+            }
+        }
+
+        Card(
+            modifier = Modifier
+                .align(alignment)
+                .fillMaxWidth()
+                .padding(top = if (step == 1 || step == 2) 72.dp else 0.dp, bottom = if (step == 3) 88.dp else 0.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            shape = RoundedCornerShape(24.dp),
+            elevation = CardDefaults.cardElevation(defaultElevation = 12.dp)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(20.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = title,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onSurface
+                    )
+                    Text(
+                        text = "$step из 3",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = BrandPrimary,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                Text(
+                    text = description,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    lineHeight = 20.sp
+                )
+
+                Spacer(Modifier.height(18.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text("Пропустить", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+
+                    Button(
+                        onClick = onNext,
+                        colors = ButtonDefaults.buttonColors(containerColor = BrandPrimary),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(if (step < 3) "Далее" else "Понятно, начать!")
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -356,7 +489,7 @@ fun QuickSleepCard(onStartSleep: () -> Unit) {
                 }
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = if (isTracking) "Нажмите, чтобы открыть таймер и управление сном" else "Приложение начнет анализ дыхания и фаз сна",
+                    text = if (isTracking) "Нажмите, чтобы открыть таймер и управление сном" else "Нажмите «Баиньки», чтобы начать трекинг фаз сна прямо сейчас",
                     color = Color.White.copy(alpha = 0.85f),
                     fontSize = 12.sp
                 )

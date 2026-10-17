@@ -21,6 +21,7 @@ class UserPreferences @Inject constructor(
 ) {
     companion object {
         val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
+        val COACH_MARKS_SHOWN = booleanPreferencesKey("coach_marks_shown")
         val HISTORY_RETENTION_DAYS = intPreferencesKey("history_retention_days")
         val DEFAULT_SNOOZE_MINUTES = intPreferencesKey("default_snooze_minutes")
         val DEFAULT_SMART_WAKE_WINDOW = intPreferencesKey("default_smart_wake_window")
@@ -30,6 +31,9 @@ class UserPreferences @Inject constructor(
     
     val onboardingCompleted: Flow<Boolean> = context.dataStore.data
         .map { it[ONBOARDING_COMPLETED] ?: false }
+
+    val coachMarksShown: Flow<Boolean> = context.dataStore.data
+        .map { it[COACH_MARKS_SHOWN] ?: false }
     
     /** 0 means unlimited */
     val historyRetentionDays: Flow<Int> = context.dataStore.data
@@ -49,6 +53,10 @@ class UserPreferences @Inject constructor(
     
     suspend fun setOnboardingCompleted(completed: Boolean) {
         context.dataStore.edit { it[ONBOARDING_COMPLETED] = completed }
+    }
+
+    suspend fun setCoachMarksShown(shown: Boolean) {
+        context.dataStore.edit { it[COACH_MARKS_SHOWN] = shown }
     }
     
     suspend fun setHistoryRetentionDays(days: Int) {

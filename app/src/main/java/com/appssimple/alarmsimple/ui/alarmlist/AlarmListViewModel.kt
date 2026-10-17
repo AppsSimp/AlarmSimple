@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.appssimple.alarmsimple.data.db.dao.AlarmDao
 import com.appssimple.alarmsimple.data.db.entity.AlarmEntity
 import com.appssimple.alarmsimple.service.AlarmScheduler
+import com.appssimple.alarmsimple.data.preferences.UserPreferences
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -17,10 +18,18 @@ import javax.inject.Inject
 @HiltViewModel
 class AlarmListViewModel @Inject constructor(
     private val alarmDao: AlarmDao,
-    private val alarmScheduler: AlarmScheduler
+    private val alarmScheduler: AlarmScheduler,
+    private val userPreferences: UserPreferences
 ) : ViewModel() {
 
     val alarms: Flow<List<AlarmEntity>> = alarmDao.getAllAlarms()
+    val coachMarksShown: Flow<Boolean> = userPreferences.coachMarksShown
+
+    fun dismissCoachMarks() {
+        viewModelScope.launch {
+            userPreferences.setCoachMarksShown(true)
+        }
+    }
 
     private val _selectedAlarmIds = MutableStateFlow<Set<Long>>(emptySet())
     val selectedAlarmIds: StateFlow<Set<Long>> = _selectedAlarmIds.asStateFlow()
