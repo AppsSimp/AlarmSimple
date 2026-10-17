@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.room.Room
 import com.appssimple.alarmsimple.data.db.AlarmDatabase
 import com.appssimple.alarmsimple.data.db.dao.AlarmDao
+import com.appssimple.alarmsimple.data.db.dao.AudioSnippetDao
 import com.appssimple.alarmsimple.data.db.dao.SleepEpochDao
 import com.appssimple.alarmsimple.data.db.dao.SleepSessionDao
 import dagger.Module
@@ -24,7 +25,8 @@ object DatabaseModule {
             context,
             AlarmDatabase::class.java,
             "alarm_simple.db"
-        ).build()
+        ).fallbackToDestructiveMigration(false)
+        .build()
     }
     
     @Provides
@@ -35,4 +37,7 @@ object DatabaseModule {
     
     @Provides
     fun provideSleepEpochDao(db: AlarmDatabase): SleepEpochDao = db.sleepEpochDao()
+
+    @Provides
+    fun provideAudioSnippetDao(db: AlarmDatabase): AudioSnippetDao = db.audioSnippetDao()
 }
