@@ -43,6 +43,7 @@ class AlarmFiringService : Service() {
 
     private var currentAlarmId: Long = 0
     private var isSirenActive = false
+    private var isSirenEnabled = false
     private var isVolumeLockEnabled = false
     private var volumeObserver: VolumeObserver? = null
 
@@ -74,10 +75,16 @@ class AlarmFiringService : Service() {
             ACTION_GIVE_5_MINUTES -> handleGive5Minutes()
             ACTION_DISMISS -> dismissAlarm()
             ACTION_SNOOZE -> handleSnooze()
-            else -> startAlarmPlayback(currentAlarmId)
+            else -> {
+                if (currentAlarmId > 0) {
+                    startAlarmPlayback(currentAlarmId)
+                } else {
+                    stopSelf()
+                }
+            }
         }
 
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun startAlarmPlayback(alarmId: Long) {
@@ -86,6 +93,7 @@ class AlarmFiringService : Service() {
         serviceScope.launch {
             val alarm = alarmDao.getAlarmById(alarmId)
             isVolumeLockEnabled = alarm?.volumeLockEnabled ?: false
+            isSirenEnabled = alarm?.sirenEnabled ?: false
 
             if (isVolumeLockEnabled) {
                 enforceMaxVolume()
@@ -177,8 +185,13 @@ class AlarmFiringService : Service() {
         questTimerJob?.cancel()
         questTimerJob = serviceScope.launch {
             delay(5 * 60 * 1000L) // 5 minutes grace period
-            // If quest wasn't completed in 5 minutes -> SIREN MODE!
-            triggerSirenMode()
+            if (isSirenEnabled) {
+                // If quest wasn't completed in 5 minutes -> SIREN MODE!
+                triggerSirenMode()
+            } else {
+                // Siren disabled: just resume the alarm at full volume.
+                mediaPlayer?.setVolume(1f, 1f)
+            }
         }
     }
 
@@ -193,7 +206,9 @@ class AlarmFiringService : Service() {
         }
 
         // Broadcast to Activity to update UI
-        val updateIntent = Intent(AlarmRingingActivity.ACTION_SIREN_TRIGGERED)
+        val updateIntent = Intent(AlarmRingingActivity.ACTION_SIREN_TRIGGERED).apply {
+            setPackage(packageName)
+        }
         sendBroadcast(updateIntent)
     }
 
@@ -223,10 +238,12 @@ class AlarmFiringService : Service() {
         abandonAudioFocus()
 
         // Tell SleepTrackingService to wrap up and compute final session stats
-        val stopTrackingIntent = Intent(this, SleepTrackingService::class.java).apply {
-            action = SleepTrackingService.ACTION_STOP_TRACKING
+        if (SleepTrackingService.isTracking.value) {
+            val stopTrackingIntent = Intent(this, SleepTrackingService::class.java).apply {
+                action = SleepTrackingService.ACTION_STOP_TRACKING
+            }
+            startService(stopTrackingIntent)
         }
-        startService(stopTrackingIntent)
 
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

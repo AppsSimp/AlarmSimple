@@ -5,6 +5,9 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.media.AudioManager
+import android.Manifest
+import android.annotation.SuppressLint
+import android.content.pm.PackageManager
 import android.nfc.NfcAdapter
 import android.nfc.Tag
 import android.os.Build
@@ -14,6 +17,7 @@ import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.camera.core.CameraSelector
 import androidx.camera.core.ExperimentalGetImage
@@ -79,6 +83,10 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
     private val isQuestActiveState = mutableStateOf(false)
     private val questSuccessTrigger = mutableStateOf(false)
 
+    private val cameraPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { /* Camera quest will show its own fallback if denied */ }
+
     companion object {
         const val ACTION_SIREN_TRIGGERED = "com.appssimple.alarmsimple.ACTION_SIREN_TRIGGERED"
     }
@@ -102,11 +110,12 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
 
         val alarmId = intent.getLongExtra(AlarmFiringService.EXTRA_ALARM_ID, -1L)
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-            registerReceiver(sirenReceiver, IntentFilter(ACTION_SIREN_TRIGGERED), RECEIVER_NOT_EXPORTED)
-        } else {
-            registerReceiver(sirenReceiver, IntentFilter(ACTION_SIREN_TRIGGERED))
-        }
+        ContextCompat.registerReceiver(
+            this,
+            sirenReceiver,
+            IntentFilter(ACTION_SIREN_TRIGGERED),
+            ContextCompat.RECEIVER_NOT_EXPORTED
+        )
 
         setContent {
             AlarmSimpleTheme {
@@ -118,11 +127,19 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                         currentAlarm = alarmDao.getAlarmById(alarmId)
                         currentAlarm?.let {
                             isVolumeLockEnabled = it.volumeLockEnabled
-                            questTypeState.value = QuestType.valueOf(it.questType)
+                            questTypeState.value = runCatching { QuestType.valueOf(it.questType) }
+                                .getOrDefault(QuestType.NONE)
                             if (questTypeState.value == QuestType.NFC) {
                                 expectedNfcTagId = it.questData
                             } else if (questTypeState.value == QuestType.BARCODE) {
                                 expectedBarcode = it.questData
+                                if (ContextCompat.checkSelfPermission(
+                                        this@AlarmRingingActivity,
+                                        Manifest.permission.CAMERA
+                                    ) != PackageManager.PERMISSION_GRANTED
+                                ) {
+                                    cameraPermissionLauncher.launch(Manifest.permission.CAMERA)
+                                }
                             }
                         }
                     }
@@ -131,6 +148,12 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                 LaunchedEffect(questSuccessTrigger.value) {
                     if (questSuccessTrigger.value) {
                         dismissAndFinish()
+                    }
+                }
+
+                LaunchedEffect(questTypeState.value) {
+                    if (questTypeState.value == QuestType.NFC) {
+                        enableNfcReaderMode()
                     }
                 }
 
@@ -183,13 +206,19 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
     override fun onResume() {
         super.onResume()
         if (questTypeState.value == QuestType.NFC) {
-            val flags = NfcAdapter.FLAG_READER_NFC_A or
-                    NfcAdapter.FLAG_READER_NFC_B or
-                    NfcAdapter.FLAG_READER_NFC_F or
-                    NfcAdapter.FLAG_READER_NFC_V or
-                    NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS
-            nfcAdapter?.enableReaderMode(this, this, flags, null)
+            enableNfcReaderMode()
         }
+    }
+
+    private fun enableNfcReaderMode() {
+        val adapter = nfcAdapter ?: return
+        if (!adapter.isEnabled) return
+        val flags = NfcAdapter.FLAG_READER_NFC_A or
+                NfcAdapter.FLAG_READER_NFC_B or
+                NfcAdapter.FLAG_READER_NFC_F or
+                NfcAdapter.FLAG_READER_NFC_V or
+                NfcAdapter.FLAG_READER_NO_PLATFORM_SOUNDS
+        runCatching { adapter.enableReaderMode(this, this, flags, null) }
     }
 
     override fun onPause() {
@@ -207,6 +236,7 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
         }
     }
 
+    @SuppressLint("RestrictedApi")
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
         if (isVolumeLockEnabled || isSirenState.value) {
             when (event.keyCode) {
@@ -260,6 +290,8 @@ fun AlarmRingingScreenContent(
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
                 .padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.SpaceBetween
@@ -309,7 +341,7 @@ fun AlarmRingingScreenContent(
                     }
                     QuestType.NFC -> {
                         Text(
-                            text = "Tap NFC tag to dismiss alarm!",
+                            text = "Приложите NFC-метку, чтобы выключить будильник",
                             style = MaterialTheme.typography.titleLarge,
                             color = if (isSiren) Color.White else MaterialTheme.colorScheme.onSurface,
                             textAlign = TextAlign.Center
@@ -380,7 +412,7 @@ fun MathQuestView(onCompleted: () -> Unit) {
         }
         val result = mathEngine.submitAnswer(-999999) // trigger timeout
         if (result == MathSubmitResult.TimeoutReset) {
-            statusMessage = "Time's up! Resetting…"
+            statusMessage = "Время вышло! Начинаем сначала…"
             currentProblem = mathEngine.nextProblem()
             answerInput = ""
         }
@@ -395,7 +427,7 @@ fun MathQuestView(onCompleted: () -> Unit) {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
-                text = "Problem ${mathEngine.solvedCount + 1} of ${mathEngine.totalProblems}",
+                text = "Задача ${mathEngine.solvedCount + 1} из ${mathEngine.totalProblems}",
                 style = MaterialTheme.typography.titleMedium
             )
             Spacer(Modifier.height(8.dp))
@@ -406,7 +438,7 @@ fun MathQuestView(onCompleted: () -> Unit) {
             )
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "$remainingSeconds s",
+                text = "$remainingSeconds с",
                 color = if (remainingSeconds < 5) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
                 fontWeight = FontWeight.Bold
             )
@@ -442,12 +474,12 @@ fun MathQuestView(onCompleted: () -> Unit) {
                                 answerInput = ""
                             }
                             MathSubmitResult.WrongAnswerReset -> {
-                                statusMessage = "Wrong! Resetting…"
+                                statusMessage = "Неверно! Начинаем сначала…"
                                 currentProblem = mathEngine.nextProblem()
                                 answerInput = ""
                             }
                             MathSubmitResult.TimeoutReset -> {
-                                statusMessage = "Time out! Resetting…"
+                                statusMessage = "Время вышло! Начинаем сначала…"
                                 currentProblem = mathEngine.nextProblem()
                                 answerInput = ""
                             }
@@ -456,7 +488,7 @@ fun MathQuestView(onCompleted: () -> Unit) {
                 },
                 modifier = Modifier.fillMaxWidth()
             ) {
-                Text("Submit")
+                Text("Ответить")
             }
         }
     }
@@ -468,8 +500,17 @@ fun BarcodeQuestView(
     expectedBarcode: String?,
     onCompleted: () -> Unit
 ) {
-    val context = LocalContext.current
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
+    val scanner = remember { BarcodeScanning.getClient() }
+    var completed by remember { mutableStateOf(false) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            runCatching { scanner.close() }
+            cameraExecutor.shutdown()
+        }
+    }
 
     Card(
         modifier = Modifier
@@ -481,7 +522,6 @@ fun BarcodeQuestView(
             AndroidView(
                 factory = { ctx ->
                     val previewView = PreviewView(ctx)
-                    val cameraExecutor = Executors.newSingleThreadExecutor()
                     val cameraProviderFuture = ProcessCameraProvider.getInstance(ctx)
 
                     cameraProviderFuture.addListener({
@@ -490,7 +530,6 @@ fun BarcodeQuestView(
                             it.setSurfaceProvider(previewView.surfaceProvider)
                         }
 
-                        val scanner = BarcodeScanning.getClient()
                         val imageAnalysis = ImageAnalysis.Builder()
                             .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                             .build()
@@ -501,9 +540,11 @@ fun BarcodeQuestView(
                                         val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
                                         scanner.process(image)
                                             .addOnSuccessListener { barcodes ->
+                                                if (completed) return@addOnSuccessListener
                                                 for (b in barcodes) {
                                                     val raw = b.rawValue
                                                     if (expectedBarcode == null || raw == expectedBarcode) {
+                                                        completed = true
                                                         onCompleted()
                                                         break
                                                     }
@@ -529,7 +570,7 @@ fun BarcodeQuestView(
             )
 
             Text(
-                text = "Scan target item barcode",
+                text = "Наведите камеру на штрихкод",
                 color = Color.White,
                 modifier = Modifier
                     .align(Alignment.BottomCenter)

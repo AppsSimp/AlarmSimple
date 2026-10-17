@@ -26,6 +26,9 @@ import com.appssimple.alarmsimple.sensor.SensorFusion
 import com.appssimple.alarmsimple.ui.MainActivity
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
 
 /**
@@ -57,12 +60,22 @@ class SleepTrackingService : Service() {
     private var sleepOnsetMs: Long? = null
     private var disturbanceCount: Int = 0
     private var snoreMinutesCount: Int = 0
+    private var alarmTriggered = false
 
     companion object {
         const val NOTIFICATION_ID = 2001
         const val ACTION_START_TRACKING = "com.appssimple.alarmsimple.ACTION_START_TRACKING"
         const val ACTION_STOP_TRACKING = "com.appssimple.alarmsimple.ACTION_STOP_TRACKING"
         const val EXTRA_ALARM_ID = "EXTRA_ALARM_ID"
+
+        /** Used when the user tracks sleep without configuring an alarm. */
+        const val NO_ALARM_ID = -1L
+
+        private val _isTracking = MutableStateFlow(false)
+        val isTracking: StateFlow<Boolean> = _isTracking.asStateFlow()
+
+        private val _trackingStartMs = MutableStateFlow(0L)
+        val trackingStartMs: StateFlow<Long> = _trackingStartMs.asStateFlow()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -82,22 +95,36 @@ class SleepTrackingService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START_TRACKING -> {
-                val alarmId = intent.getLongExtra(EXTRA_ALARM_ID, -1L)
+                val alarmId = intent.getLongExtra(EXTRA_ALARM_ID, NO_ALARM_ID)
                 startTracking(alarmId)
             }
             ACTION_STOP_TRACKING -> {
                 stopTracking()
             }
+            else -> stopSelf()
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun startTracking(alarmId: Long) {
+        if (_isTracking.value) return
+
         targetAlarmId = alarmId
+        sleepOnsetMs = null
+        disturbanceCount = 0
+        snoreMinutesCount = 0
+        isDurationMode = false
+        isSmartWakeEnabled = false
+        scheduledAlarmTimeMs = 0L
+        targetDurationMinutes = 0
+        alarmTriggered = false
+
         startForegroundServiceWithNotification()
+        _isTracking.value = true
+        _trackingStartMs.value = System.currentTimeMillis()
 
         serviceScope.launch {
-            val alarm = alarmDao.getAlarmById(alarmId)
+            val alarm = if (alarmId > 0) alarmDao.getAlarmById(alarmId) else null
             if (alarm != null) {
                 isDurationMode = alarm.mode == AlarmMode.DURATION.name
                 targetDurationMinutes = alarm.durationMinutes ?: (7 * 60 + 30)
@@ -106,9 +133,9 @@ class SleepTrackingService : Service() {
                 scheduledAlarmTimeMs = alarm.targetTimeMs ?: 0L
             }
 
-            // Create new SleepSession in DB
+            // Create new SleepSession in DB (alarmId is null for manual tracking)
             val session = SleepSessionEntity(
-                alarmId = alarmId,
+                alarmId = alarmId.takeIf { it > 0 },
                 trackingStartMs = System.currentTimeMillis()
             )
             currentSessionId = sleepSessionDao.insertSession(session)
@@ -180,7 +207,7 @@ class SleepTrackingService : Service() {
         }
 
         // Smart Wake-Up evaluation
-        if (isSmartWakeEnabled && scheduledAlarmTimeMs > 0) {
+        if (isSmartWakeEnabled && scheduledAlarmTimeMs > 0 && !alarmTriggered) {
             val now = epochState.timestampMs
             val windowStartMs = scheduledAlarmTimeMs - (smartWakeWindowMinutes * 60_000L)
 
@@ -195,6 +222,13 @@ class SleepTrackingService : Service() {
     }
 
     private fun triggerAlarmEarly() {
+        if (alarmTriggered) return
+        alarmTriggered = true
+
+        if (targetAlarmId > 0) {
+            alarmScheduler.cancelAlarm(targetAlarmId)
+        }
+
         val alarmIntent = Intent(this, AlarmFiringService::class.java).apply {
             putExtra(AlarmFiringService.EXTRA_ALARM_ID, targetAlarmId)
             putExtra(AlarmFiringService.EXTRA_EARLY_WAKE, true)
@@ -207,18 +241,40 @@ class SleepTrackingService : Service() {
     }
 
     private fun stopTracking() {
+        if (!_isTracking.value) {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
+            return
+        }
+        _isTracking.value = false
+        _trackingStartMs.value = 0L
+
         serviceScope.launch {
             sensorFusion.stop()
 
-            val existing = sleepSessionDao.getSessionById(currentSessionId)
-            if (existing != null) {
-                sleepSessionDao.updateSession(
-                    existing.copy(
-                        wakeUpMs = System.currentTimeMillis(),
-                        disturbanceCount = disturbanceCount,
-                        snoreMinutes = snoreMinutesCount / 2
-                    )
-                )
+            if (currentSessionId > 0) {
+                val existing = sleepSessionDao.getSessionById(currentSessionId)
+                if (existing != null) {
+                    val now = System.currentTimeMillis()
+                    val onset = existing.sleepOnsetMs
+                    val sleepDurationMs = if (onset != null) now - onset else 0L
+
+                    // Если сна не было вовсе или реальный сон длился меньше 10 минут (600_000 мс) —
+                    // удаляем мусорную сессию и не засоряем статистику!
+                    if (onset == null || sleepDurationMs < 600_000L) {
+                        sleepEpochDao.deleteEpochsForSession(currentSessionId)
+                        audioSnippetDao.deleteSnippetsForSession(currentSessionId)
+                        sleepSessionDao.deleteSession(existing)
+                    } else if (existing.wakeUpMs == null) {
+                        sleepSessionDao.updateSession(
+                            existing.copy(
+                                wakeUpMs = now,
+                                disturbanceCount = disturbanceCount,
+                                snoreMinutes = snoreMinutesCount / 2
+                            )
+                        )
+                    }
+                }
             }
 
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -234,13 +290,26 @@ class SleepTrackingService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val stopIntent = Intent(this, SleepTrackingService::class.java).apply {
+            action = ACTION_STOP_TRACKING
+        }
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            NOTIFICATION_ID + 1,
+            stopIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         val notification: Notification = NotificationCompat.Builder(this, AlarmSimpleApp.CHANNEL_SLEEP_TRACKING)
-            .setContentTitle(getString(R.string.channel_tracking_name))
-            .setContentText(getString(R.string.channel_tracking_description))
+            .setContentTitle(
+                if (targetAlarmId > 0) getString(R.string.channel_tracking_name) else "Сон отслеживается"
+            )
+            .setContentText("Датчики активны. Нажмите, чтобы открыть приложение.")
             .setSmallIcon(android.R.drawable.ic_menu_compass)
             .setContentIntent(pendingIntent)
             .setOngoing(true)
             .setPriority(NotificationCompat.PRIORITY_LOW)
+            .addAction(0, "Завершить", stopPendingIntent)
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -251,6 +320,8 @@ class SleepTrackingService : Service() {
     }
 
     override fun onDestroy() {
+        _isTracking.value = false
+        _trackingStartMs.value = 0L
         serviceScope.cancel()
         wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()

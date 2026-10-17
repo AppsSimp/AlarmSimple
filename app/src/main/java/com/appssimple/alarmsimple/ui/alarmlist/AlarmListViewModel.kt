@@ -7,6 +7,10 @@ import com.appssimple.alarmsimple.data.db.entity.AlarmEntity
 import com.appssimple.alarmsimple.service.AlarmScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
@@ -18,16 +22,66 @@ class AlarmListViewModel @Inject constructor(
 
     val alarms: Flow<List<AlarmEntity>> = alarmDao.getAllAlarms()
 
+    private val _selectedAlarmIds = MutableStateFlow<Set<Long>>(emptySet())
+    val selectedAlarmIds: StateFlow<Set<Long>> = _selectedAlarmIds.asStateFlow()
+
+    fun toggleSelection(alarmId: Long) {
+        _selectedAlarmIds.update { current ->
+            if (current.contains(alarmId)) current - alarmId else current + alarmId
+        }
+    }
+
+    fun selectAll(allIds: List<Long>) {
+        _selectedAlarmIds.value = allIds.toSet()
+    }
+
+    fun clearSelection() {
+        _selectedAlarmIds.value = emptySet()
+    }
+
     fun toggleAlarmActive(alarmId: Long, isActive: Boolean) {
         viewModelScope.launch {
             alarmDao.setAlarmActive(alarmId, isActive)
             val alarm = alarmDao.getAlarmById(alarmId)
             if (alarm != null) {
-                if (isActive && alarm.targetTimeMs != null) {
-                    alarmScheduler.scheduleAlarm(alarm.targetTimeMs, alarm.id)
+                val target = alarm.targetTimeMs
+                if (isActive && target != null) {
+                    val now = System.currentTimeMillis()
+                    val nextTrigger = if (target > now) target else target + 24 * 60 * 60 * 1000L
+                    alarmScheduler.scheduleAlarm(nextTrigger, alarm.id)
                 } else {
                     alarmScheduler.cancelAlarm(alarm.id)
                 }
+            }
+        }
+    }
+
+    fun deleteAlarm(alarm: AlarmEntity) {
+        viewModelScope.launch {
+            alarmScheduler.cancelAlarm(alarm.id)
+            alarmDao.deleteAlarm(alarm)
+        }
+    }
+
+    fun deleteSelectedAlarms(allAlarms: List<AlarmEntity>) {
+        val selected = _selectedAlarmIds.value
+        if (selected.isEmpty()) return
+
+        viewModelScope.launch {
+            allAlarms.filter { selected.contains(it.id) }.forEach { alarm ->
+                alarmScheduler.cancelAlarm(alarm.id)
+                alarmDao.deleteAlarm(alarm)
+            }
+            clearSelection()
+        }
+    }
+
+    fun restoreAlarm(alarm: AlarmEntity) {
+        viewModelScope.launch {
+            val id = alarmDao.insertAlarm(alarm)
+            val finalId = if (alarm.id != 0L) alarm.id else id
+            if (alarm.isActive && alarm.targetTimeMs != null) {
+                alarmScheduler.scheduleAlarm(alarm.targetTimeMs, finalId)
             }
         }
     }
