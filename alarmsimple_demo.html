@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>AlarmSimple - Demo Showcase</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    @keyframes pulseGlow {
+      0%, 100% { opacity: 0.4; transform: scale(1); }
+      50% { opacity: 0.8; transform: scale(1.08); }
+    }
+    @keyframes floatPhone {
+      0%, 100% { transform: translateY(0px) rotateY(-8deg) rotateX(4deg); }
+      50% { transform: translateY(-12px) rotateY(6deg) rotateX(-2deg); }
+    }
+    @keyframes radarWave {
+      0% { transform: scale(0.6); opacity: 0.9; }
+      100% { transform: scale(2.4); opacity: 0; }
+    }
+    @keyframes gradientShift {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    .neon-glow {
+      box-shadow: 0 0 50px rgba(99, 102, 241, 0.45), 0 0 100px rgba(168, 85, 247, 0.25);
+    }
+    .perspective-container {
+      perspective: 1200px;
+    }
+    .phone-3d {
+      transform-style: preserve-3d;
+      animation: floatPhone 7s ease-in-out infinite;
+      transition: all 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+    }
+    .bg-animated-mesh {
+      background: radial-gradient(circle at 20% 30%, #312e81 0%, transparent 40%),
+                  radial-gradient(circle at 80% 70%, #4c1d95 0%, transparent 45%),
+                  radial-gradient(circle at 50% 50%, #0f172a 0%, #020617 100%);
+    }
+  </style>
+</head>
+<body class="bg-[#020617] text-white min-h-screen flex flex-col font-sans overflow-x-hidden select-none">
+
+  <!-- Floating Particles Canvas Background -->
+  <canvas id="particlesCanvas" class="fixed inset-0 pointer-events-none z-0"></canvas>
+
+  <!-- Top Ambient Glow -->
+  <div class="fixed top-0 left-1/2 -translate-x-1/2 w-[700px] h-[300px] bg-indigo-600/25 blur-[140px] pointer-events-none z-0 rounded-full"></div>
+
+  <!-- Header & Controls -->
+  <header class="relative z-10 w-full max-w-6xl mx-auto px-6 py-5 flex items-center justify-between border-b border-slate-800/60 backdrop-blur-md">
+    <div class="flex items-center space-x-3">
+      <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+        <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      </div>
+      <div>
+        <h1 class="text-xl font-black tracking-tight bg-gradient-to-r from-white via-indigo-100 to-indigo-300 bg-clip-text text-transparent">
+          AlarmSimple <span class="text-xs font-semibold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30 ml-1">PROMO DEMO</span>
+        </h1>
+        <p class="text-xs text-slate-400">Умный будильник нового поколения • NFC • Штрихкод • Фазы сна</p>
+      </div>
+    </div>
+
+    <!-- Interactive Scene Controller -->
+    <div class="flex items-center space-x-3">
+      <button id="btnRecord" onclick="toggleRecord()" class="px-4 py-2 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white text-xs font-bold flex items-center space-x-2 shadow-lg shadow-rose-500/25 transition-all cursor-pointer">
+        <span class="w-2.5 h-2.5 rounded-full bg-white animate-pulse" id="recordDot"></span>
+        <span id="recordLabel">Записать видео</span>
+      </button>
+      <button id="btnAutoPlay" onclick="toggleAutoPlay()" class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 text-xs font-bold flex items-center space-x-2 transition cursor-pointer">
+        <span id="autoPlayIcon">▶</span>
+        <span id="autoPlayLabel">Авто-тур (Видео)</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Presentation Area -->
+  <main class="relative z-10 flex-1 max-w-6xl w-full mx-auto px-6 py-8 flex flex-col lg:flex-row items-center justify-between gap-12">
+    
+    <!-- Left Column: Story & Features Showcase -->
+    <div class="flex-1 space-y-6 text-left max-w-xl">
+      <div class="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-indigo-950/80 border border-indigo-700/50 text-indigo-300 text-xs font-medium">
+        <span class="w-2 h-2 rounded-full bg-indigo-400 animate-ping"></span>
+        <span id="sceneBadge">Сцена 1: Умный старт и Онбординг</span>
+      </div>
+
+      <h2 id="sceneTitle" class="text-4xl lg:text-5xl font-black tracking-tight leading-tight bg-gradient-to-r from-white via-slate-100 to-indigo-200 bg-clip-text text-transparent transition-all duration-500">
+        Просыпайтесь бодрым в лёгкой фазе сна
+      </h2>
+
+      <p id="sceneDesc" class="text-slate-300 text-base leading-relaxed transition-all duration-500">
+        Будильник анализирует микро-движения и дыхание через акселерометр и микрофон, определяя глубокую и лёгкую фазы без браслетов и нательных трекеров.
+      </p>
+
+      <!-- Key Pill Highlights -->
+      <div id="featurePills" class="grid grid-cols-2 gap-3 pt-2">
+        <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center space-x-3">
+          <div class="w-8 h-8 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center font-bold">💳</div>
+          <div>
+            <div class="text-xs font-bold text-white">Банковская карта</div>
+            <div class="text-[11px] text-slate-400">NFC-квест на кухне</div>
+          </div>
+        </div>
+        <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center space-x-3">
+          <div class="w-8 h-8 rounded-lg bg-pink-500/20 text-pink-400 flex items-center justify-center font-bold">📢</div>
+          <div>
+            <div class="text-xs font-bold text-white">Замок громкости</div>
+            <div class="text-[11px] text-slate-400">Кнопки заблокированы</div>
+          </div>
+        </div>
+        <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center space-x-3">
+          <div class="w-8 h-8 rounded-lg bg-cyan-500/20 text-cyan-400 flex items-center justify-center font-bold">🌙</div>
+          <div>
+            <div class="text-xs font-bold text-white">Режим «Баиньки»</div>
+            <div class="text-[11px] text-slate-400">Трекинг сна в 1 клик</div>
+          </div>
+        </div>
+        <div class="p-3 rounded-xl bg-slate-900/80 border border-slate-800 flex items-center space-x-3">
+          <div class="w-8 h-8 rounded-lg bg-purple-500/20 text-purple-400 flex items-center justify-center font-bold">📊</div>
+          <div>
+            <div class="text-xs font-bold text-white">Умное окно 45м</div>
+            <div class="text-[11px] text-slate-400">Мягкое пробуждение</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Navigation Steps -->
+      <div class="pt-4 flex items-center space-x-2">
+        <button onclick="setStep(0)" class="step-btn px-4 py-2 rounded-xl text-xs font-bold transition border border-indigo-500 bg-indigo-600 text-white shadow-lg shadow-indigo-600/30">1. Баиньки</button>
+        <button onclick="setStep(1)" class="step-btn px-4 py-2 rounded-xl text-xs font-bold transition border border-slate-800 bg-slate-900/80 text-slate-400 hover:text-white">2. NFC Квест</button>
+        <button onclick="setStep(2)" class="step-btn px-4 py-2 rounded-xl text-xs font-bold transition border border-slate-800 bg-slate-900/80 text-slate-400 hover:text-white">3. Будильник</button>
+        <button onclick="setStep(3)" class="step-btn px-4 py-2 rounded-xl text-xs font-bold transition border border-slate-800 bg-slate-900/80 text-slate-400 hover:text-white">4. Аналитика</button>
+      </div>
+    </div>
+
+    <!-- Right Column: 3D Smartphone Device Mockup with Real Animated App Screens -->
+    <div class="perspective-container relative flex items-center justify-center p-6">
+      
+      <!-- Ambient Backlight behind Phone -->
+      <div id="phoneGlow" class="absolute w-72 h-[520px] rounded-[50px] bg-gradient-to-tr from-indigo-500/40 via-purple-500/30 to-pink-500/20 blur-3xl -z-10 transition-all duration-700"></div>
+
+      <!-- Realistic Smartphone Body -->
+      <div id="phoneMockup" class="phone-3d relative w-[310px] h-[640px] rounded-[44px] bg-[#1e293b] p-3 shadow-2xl border-4 border-slate-700/80 ring-1 ring-white/20">
+        
+        <!-- Outer Volume Buttons & Power Button -->
+        <div class="absolute -left-[7px] top-28 w-[3px] h-10 bg-slate-600 rounded-l"></div>
+        <div class="absolute -left-[7px] top-42 w-[3px] h-10 bg-slate-600 rounded-l"></div>
+        <div class="absolute -right-[7px] top-32 w-[3px] h-14 bg-slate-600 rounded-r"></div>
+
+        <!-- Inner Glass Display -->
+        <div class="relative w-full h-full rounded-[34px] bg-[#090d16] overflow-hidden flex flex-col border border-slate-800/80">
+          
+          <!-- Dynamic Island / Speaker Notch -->
+          <div class="absolute top-2 left-1/2 -translate-x-1/2 w-28 h-5 bg-black rounded-full z-40 flex items-center justify-between px-3">
+            <div class="w-2.5 h-2.5 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center">
+              <div class="w-1 h-1 rounded-full bg-blue-900"></div>
+            </div>
+            <div class="w-2 h-2 rounded-full bg-green-500/40 animate-pulse"></div>
+          </div>
+
+          <!-- Status Bar -->
+          <div class="pt-2 px-6 pb-1 flex justify-between items-center text-[10px] text-slate-300 font-semibold z-30">
+            <span>07:30</span>
+            <div class="flex items-center space-x-1.5">
+              <span>5G</span>
+              <div class="w-4 h-2 border border-slate-300 rounded-sm p-0.5 flex items-center">
+                <div class="w-full h-full bg-white rounded-xs"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- SCREEN CONTAINER (Switches based on Step) -->
+          <div id="appScreenContent" class="relative flex-1 p-4 flex flex-col justify-between text-white overflow-hidden transition-all duration-500">
+            <!-- Screen 1: Dashboard & Quick Sleep ("Баиньки") -->
+            <div id="screen1" class="space-y-4 pt-1 transition-opacity duration-300">
+              <!-- Top bar inside app -->
+              <div class="flex items-center justify-between">
+                <div class="flex items-center space-x-2">
+                  <div class="w-7 h-7 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-600 flex items-center justify-center">
+                    <span class="text-xs">⏰</span>
+                  </div>
+                  <span class="font-extrabold text-sm tracking-wide">AlarmSimple</span>
+                </div>
+                <div class="flex items-center space-x-2 text-slate-400">
+                  <span class="text-xs p-1 rounded bg-slate-800">❓</span>
+                  <span class="text-xs p-1 rounded bg-slate-800">⚙️</span>
+                </div>
+              </div>
+
+              <!-- Quick Sleep Card ("Баиньки") -->
+              <div class="p-3.5 rounded-2xl bg-gradient-to-r from-indigo-950/80 to-purple-950/60 border border-indigo-500/50 relative overflow-hidden shadow-lg shadow-indigo-950/60">
+                <div class="absolute -right-4 -bottom-4 w-20 h-20 bg-indigo-500/20 rounded-full blur-xl"></div>
+                <div class="flex justify-between items-start">
+                  <div>
+                    <div class="text-[11px] font-bold text-indigo-300 flex items-center space-x-1">
+                      <span>🌙</span> <span>Идёте спать прямо сейчас?</span>
+                    </div>
+                    <div class="text-[10px] text-slate-400 mt-0.5">Включите ночной мониторинг фаз</div>
+                  </div>
+                  <div class="w-2.5 h-2.5 rounded-full bg-indigo-400 animate-ping"></div>
+                </div>
+                <div class="mt-3 flex items-center justify-between">
+                  <button class="px-3 py-1.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 text-[11px] font-bold shadow-md shadow-indigo-500/40">
+                    Баиньки 💤
+                  </button>
+                  <span class="text-[10px] text-indigo-300">Без будильника</span>
+                </div>
+              </div>
+
+              <!-- Alarm Card Item -->
+              <div class="p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800 space-y-2">
+                <div class="flex justify-between items-center">
+                  <span class="text-2xl font-black tracking-tight text-white">07:30</span>
+                  <!-- Switch Component -->
+                  <div class="w-10 h-5 bg-indigo-600 rounded-full p-0.5 flex justify-end">
+                    <div class="w-4 h-4 bg-white rounded-full shadow"></div>
+                  </div>
+                </div>
+                <div class="flex items-center space-x-2 text-[10px] text-slate-400">
+                  <span class="px-1.5 py-0.5 rounded bg-indigo-950/60 text-indigo-300 border border-indigo-800/40">Умное окно 30 мин</span>
+                  <span>Пн, Вт, Ср, Чт, Пт</span>
+                </div>
+                <div class="flex items-center justify-between pt-1 border-t border-slate-800/80 text-[10px]">
+                  <span class="text-pink-400 flex items-center space-x-1">
+                    <span>💳</span> <span>NFC: Карта МИР</span>
+                  </span>
+                  <span class="text-emerald-400">Сирена вкл.</span>
+                </div>
+              </div>
+
+              <!-- Animated Coach Marks Tooltip -->
+              <div class="p-3 rounded-xl bg-indigo-900/90 border border-indigo-400/60 shadow-xl space-y-1">
+                <div class="flex justify-between items-center">
+                  <span class="text-[11px] font-bold text-white">💡 Подсказка за ручку</span>
+                  <span class="text-[9px] bg-indigo-500/40 px-1.5 py-0.5 rounded text-indigo-200">1 из 3</span>
+                </div>
+                <p class="text-[10px] text-indigo-100 leading-snug">
+                  Привяжите карту или стикер умывальника — будильник не выключится, пока вы не встанете с кровати!
+                </p>
+              </div>
+            </div>
+
+            <!-- Screen 2: NFC Quest Trigger & Radar Wave -->
+            <div id="screen2" class="hidden space-y-4 pt-4 text-center">
+              <div class="text-xs font-bold text-rose-400 tracking-wider uppercase">Будильник звонит!</div>
+              <div class="text-4xl font-black text-white">07:22</div>
+              <p class="text-[11px] text-slate-300">Поймана лёгкая фаза сна • До пика 8 мин</p>
+
+              <!-- Radar Animation for NFC -->
+              <div class="relative w-40 h-40 mx-auto flex items-center justify-center my-4">
+                <div class="absolute inset-0 rounded-full bg-indigo-500/20 border border-indigo-400/40 animate-ping"></div>
+                <div class="absolute w-28 h-28 rounded-full bg-purple-500/30 border border-purple-400/40" style="animation: pulseGlow 2s infinite"></div>
+                <div class="w-16 h-16 rounded-2xl bg-gradient-to-tr from-pink-500 to-indigo-600 flex items-center justify-center text-2xl shadow-xl z-10">
+                  💳
+                </div>
+              </div>
+
+              <div class="p-3 rounded-2xl bg-slate-900/90 border border-slate-800 text-[11px] space-y-1">
+                <div class="font-bold text-white">Приложите банковскую карту</div>
+                <div class="text-slate-400 text-[10px]">Кнопки громкости отключены • Сирена сработает через 04:48</div>
+              </div>
+            </div>
+
+            <!-- Screen 3: Alarm Setup Screen -->
+            <div id="screen3" class="hidden space-y-3 pt-2">
+              <div class="flex items-center space-x-2 border-b border-slate-800 pb-2">
+                <span class="text-xs text-slate-400">←</span>
+                <span class="text-xs font-bold">Настройка умного будильника</span>
+              </div>
+              <div class="p-3 rounded-2xl bg-slate-900 border border-slate-800 flex justify-between items-center">
+                <span class="text-xs text-slate-300">Время подъема</span>
+                <span class="text-xl font-black text-indigo-400">07:00</span>
+              </div>
+              <!-- Smart Window -->
+              <div class="p-3 rounded-2xl bg-slate-900 border border-slate-800 space-y-2">
+                <div class="flex justify-between text-xs">
+                  <span class="font-bold text-white">Умное окно</span>
+                  <span class="text-indigo-400 font-bold">30 минут</span>
+                </div>
+                <div class="grid grid-cols-4 gap-1.5 text-center">
+                  <div class="py-1 bg-slate-800 rounded-lg text-[10px] text-slate-400">15м</div>
+                  <div class="py-1 bg-indigo-600 rounded-lg text-[10px] text-white font-bold">30м</div>
+                  <div class="py-1 bg-slate-800 rounded-lg text-[10px] text-slate-400">45м</div>
+                  <div class="py-1 bg-slate-800 rounded-lg text-[10px] text-slate-400">60м</div>
+                </div>
+              </div>
+              <!-- Quest Selection -->
+              <div class="p-3 rounded-2xl bg-gradient-to-r from-slate-900 to-indigo-950 border border-indigo-900/60 space-y-2">
+                <div class="text-xs font-bold text-white">Квест выключения</div>
+                <div class="grid grid-cols-3 gap-2 text-center text-[10px]">
+                  <div class="p-2 rounded-xl bg-indigo-600 text-white font-bold shadow">💳 NFC</div>
+                  <div class="p-2 rounded-xl bg-slate-800 text-slate-300">📷 Штрихкод</div>
+                  <div class="p-2 rounded-xl bg-slate-800 text-slate-300">➗ Математика</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Screen 4: Sleep Analytics Graph -->
+            <div id="screen4" class="hidden space-y-3 pt-2">
+              <div class="flex justify-between items-center">
+                <span class="text-xs font-bold">Анализ ночи • 18 Окт</span>
+                <span class="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 font-bold">92% КПД</span>
+              </div>
+
+              <!-- Sleep Graph Representation -->
+              <div class="h-28 w-full bg-slate-900/90 rounded-2xl border border-slate-800 p-2 flex flex-col justify-between">
+                <div class="flex justify-between text-[9px] text-slate-400">
+                  <span>23:45</span>
+                  <span>02:30 (Глубокий)</span>
+                  <span>07:15 (Пробуждение)</span>
+                </div>
+                <!-- Mini SVG Sleep Graph -->
+                <svg class="w-full h-16" viewBox="0 0 200 60" fill="none">
+                  <path d="M0,20 Q20,5 40,25 T80,45 T120,15 T160,35 T200,10 L200,60 L0,60 Z" fill="url(#sleepGrad)" opacity="0.3"/>
+                  <path d="M0,20 Q20,5 40,25 T80,45 T120,15 T160,35 T200,10" stroke="#818cf8" stroke-width="2.5" stroke-linecap="round"/>
+                  <defs>
+                    <linearGradient id="sleepGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="#818cf8"/>
+                      <stop offset="100%" stop-color="transparent"/>
+                    </linearGradient>
+                  </defs>
+                </svg>
+              </div>
+
+              <!-- Stats Cards -->
+              <div class="grid grid-cols-2 gap-2 text-[10px]">
+                <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                  <div class="text-slate-400">Длительность</div>
+                  <div class="text-sm font-black text-white mt-0.5">7ч 30мин</div>
+                </div>
+                <div class="p-2.5 rounded-xl bg-slate-900 border border-slate-800">
+                  <div class="text-slate-400">Пробуждений</div>
+                  <div class="text-sm font-black text-indigo-400 mt-0.5">0 раз</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Bottom Floating Action Navigation inside App -->
+            <div class="pt-2 flex justify-center">
+              <div class="w-24 h-1 bg-slate-700 rounded-full"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Script for Canvas Particles, Interactive Scenes, and WebM/MP4 Recording -->
+  <script>
+    // 1. Interactive Particles
+    const canvas = document.getElementById('particlesCanvas');
+    const ctx = canvas.getContext('2d');
+    let width = canvas.width = window.innerWidth;
+    let height = canvas.height = window.innerHeight;
+
+    window.addEventListener('resize', () => {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+    });
+
+    const particles = Array.from({ length: 45 }, () => ({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      r: Math.random() * 2.5 + 1,
+      dx: (Math.random() - 0.5) * 0.6,
+      dy: (Math.random() - 0.5) * 0.6,
+      c: Math.random() > 0.5 ? 'rgba(129, 140, 248, ' : 'rgba(236, 72, 153, '
+    }));
+
+    function drawParticles() {
+      ctx.clearRect(0, 0, width, height);
+      particles.forEach(p => {
+        p.x += p.dx;
+        p.y += p.dy;
+        if (p.x < 0) p.x = width;
+        if (p.x > width) p.x = 0;
+        if (p.y < 0) p.y = height;
+        if (p.y > height) p.y = 0;
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = p.c + '0.45)';
+        ctx.shadowBlur = 10;
+        ctx.shadowColor = p.c + '0.8)';
+        ctx.fill();
+      });
+      requestAnimationFrame(drawParticles);
+    }
+    drawParticles();
+
+    // 2. Step Switching & Presentation Logic
+    const scenes = [
+      {
+        badge: "Сцена 1: Умный старт и Онбординг",
+        title: "Просыпайтесь бодрым в лёгкой фазе сна",
+        desc: "AlarmSimple анализирует фазы сна прямо с матраса. Нажмите «Баиньки» — и трекинг запустится в один клик без звонка будильника.",
+        glow: "from-indigo-500/40 via-purple-500/30 to-pink-500/20"
+      },
+      {
+        badge: "Сцена 2: Неотключаемый NFC-квест",
+        title: "Привяжите даже банковскую карту",
+        desc: "Будильник нельзя убавить кнопками громкости! Чтобы выключить сирену, приложите банковскую карту или NFC-стикер из ванной комнаты.",
+        glow: "from-rose-500/40 via-red-500/30 to-indigo-500/20"
+      },
+      {
+        badge: "Сцена 3: Гибкая настройка пробуждения",
+        title: "Окно пробуждения до 60 минут",
+        desc: "Задайте окно легкого сна. Умный алгоритм выберет идеальную минуту подъема, чтобы исключить сонливость и головную боль.",
+        glow: "from-purple-500/40 via-indigo-500/30 to-cyan-500/20"
+      },
+      {
+        badge: "Сцена 4: Детальная аналитика сна",
+        title: "Точная статистика каждой ночи",
+        desc: "Графики глубокого и быстрого сна, процент эффективности и история без забивания памяти. Всё хранится локально и безопасно.",
+        glow: "from-emerald-500/40 via-teal-500/30 to-indigo-500/20"
+      }
+    ];
+
+    let currentStep = 0;
+    function setStep(index) {
+      currentStep = index;
+      const s = scenes[index];
+
+      // Update Texts with smooth transition
+      document.getElementById('sceneBadge').innerText = s.badge;
+      document.getElementById('sceneTitle').innerText = s.title;
+      document.getElementById('sceneDesc').innerText = s.desc;
+
+      // Update Glow
+      const glow = document.getElementById('phoneGlow');
+      glow.className = `absolute w-72 h-[520px] rounded-[50px] bg-gradient-to-tr ${s.glow} blur-3xl -z-10 transition-all duration-700`;
+
+      // Switch Screens in Mockup
+      for (let i = 1; i <= 4; i++) {
+        const sc = document.getElementById(`screen${i}`);
+        if (i === index + 1) {
+          sc.classList.remove('hidden');
+        } else {
+          sc.classList.add('hidden');
+        }
+      }
+
+      // Update Step Buttons styling
+      document.querySelectorAll('.step-btn').forEach((btn, idx) => {
+        if (idx === index) {
+          btn.className = "step-btn px-4 py-2 rounded-xl text-xs font-bold transition border border-indigo-500 bg-indigo-600 text-white shadow-lg shadow-indigo-600/30";
+        } else {
+          btn.className = "step-btn px-4 py-2 rounded-xl text-xs font-bold transition border border-slate-800 bg-slate-900/80 text-slate-400 hover:text-white";
+        }
+      });
+    }
+
+    // 3. Auto-play loop for video recording / showcase
+    let autoPlayInterval = null;
+    function toggleAutoPlay() {
+      if (autoPlayInterval) {
+        clearInterval(autoPlayInterval);
+        autoPlayInterval = null;
+        document.getElementById('autoPlayLabel').innerText = "Авто-тур (Видео)";
+        document.getElementById('autoPlayIcon').innerText = "▶";
+      } else {
+        document.getElementById('autoPlayLabel').innerText = "Пауза";
+        document.getElementById('autoPlayIcon').innerText = "⏸";
+        autoPlayInterval = setInterval(() => {
+          setStep((currentStep + 1) % scenes.length);
+        }, 3600);
+      }
+    }
+
+    // 4. Video Recording via MediaRecorder (Captures display or canvas)
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    async function toggleRecord() {
+      const btn = document.getElementById('btnRecord');
+      const dot = document.getElementById('recordDot');
+      const label = document.getElementById('recordLabel');
+
+      if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+        label.innerText = "Записать видео";
+        dot.classList.remove('bg-red-400');
+        dot.classList.add('bg-white');
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: 60, displaySurface: "browser" },
+          audio: false
+        });
+
+        recordedChunks = [];
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) recordedChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(recordedChunks, { type: 'video/webm' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `AlarmSimple-Demo-${Date.now()}.webm`;
+          a.click();
+          stream.getTracks().forEach(track => track.stop());
+        };
+
+        mediaRecorder.start();
+        label.innerText = "Остановить и скачать";
+        dot.classList.add('bg-red-400');
+
+        // Automatically start auto-play if not started
+        if (!autoPlayInterval) toggleAutoPlay();
+
+      } catch (err) {
+        alert("Запись экрана отменена или не поддерживается в этом режиме просмотра.");
+      }
+    }
+  </script>
+</body>
+</html>
