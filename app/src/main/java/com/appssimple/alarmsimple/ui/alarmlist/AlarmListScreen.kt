@@ -6,6 +6,7 @@ import androidx.compose.animation.*
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.*
@@ -50,6 +51,7 @@ fun AlarmListScreen(
     onEditAlarm: (Long) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenHistory: () -> Unit,
+    onOpenSleepTracking: () -> Unit,
     viewModel: AlarmListViewModel = hiltViewModel()
 ) {
     val alarms by viewModel.alarms.collectAsState(initial = emptyList())
@@ -157,38 +159,34 @@ fun AlarmListScreen(
             }
         ) { padding ->
             if (alarms.isEmpty()) {
-                Box(
+                Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(padding),
-                    contentAlignment = Alignment.Center
+                        .padding(padding)
+                        .padding(horizontal = 16.dp, vertical = 8.dp)
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(20.dp)
-                    ) {
-                        // Карточка быстрого запуска сна даже когда нет будильников
-                        QuickSleepCard(
-                            onStartSleep = {
-                                val intent = Intent(context, SleepTrackingService::class.java).apply {
-                                    action = SleepTrackingService.ACTION_START_TRACKING
-                                    putExtra(SleepTrackingService.EXTRA_ALARM_ID, -1L)
-                                }
-                                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                                    context.startForegroundService(intent)
-                                } else {
-                                    context.startService(intent)
-                                }
-                                scope.launch {
-                                    snackbarHostState.showSnackbar("Трекинг сна без будильника запущен. Спокойной ночи!")
-                                }
+                    // Карточка быстрого запуска сна ВСЕГДА вверху экрана
+                    QuickSleepCard(
+                        onStartSleep = {
+                            val intent = Intent(context, SleepTrackingService::class.java).apply {
+                                action = SleepTrackingService.ACTION_START_TRACKING
+                                putExtra(SleepTrackingService.EXTRA_ALARM_ID, -1L)
                             }
-                        )
+                            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                context.startForegroundService(intent)
+                            } else {
+                                context.startService(intent)
+                            }
+                            onOpenSleepTracking()
+                        }
+                    )
 
-                        Spacer(Modifier.height(40.dp))
+                    Spacer(Modifier.weight(0.5f))
 
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
                         Box(
                             modifier = Modifier
                                 .size(80.dp)
@@ -206,12 +204,15 @@ fun AlarmListScreen(
                         )
                         Spacer(Modifier.height(8.dp))
                         Text(
-                            text = "Вы можете отслеживать фазы сна без будильника выше или нажать кнопку ниже, чтобы добавить новый будильник.",
+                            text = "Вы можете запустить трекинг сна прямо сейчас или нажать «+» внизу для настройки умного будильника.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                            modifier = Modifier.padding(horizontal = 24.dp)
                         )
                     }
+
+                    Spacer(Modifier.weight(1f))
                 }
             } else {
                 LazyColumn(
@@ -234,9 +235,7 @@ fun AlarmListScreen(
                                 } else {
                                     context.startService(intent)
                                 }
-                                scope.launch {
-                                    snackbarHostState.showSnackbar("Трекинг сна запущен. Спокойной ночи!")
-                                }
+                                onOpenSleepTracking()
                             }
                         )
                     }
@@ -312,11 +311,20 @@ fun AlarmListScreen(
 
 @Composable
 fun QuickSleepCard(onStartSleep: () -> Unit) {
+    val isTracking by SleepTrackingService.isTracking.collectAsState()
+
     Box(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(20.dp))
-            .background(SleepGradient)
+            .background(if (isTracking) BrandPrimary.copy(alpha = 0.25f) else Color.Transparent)
+            .border(
+                width = 1.dp,
+                brush = if (isTracking) PrimaryGradient else SleepGradient,
+                shape = RoundedCornerShape(20.dp)
+            )
+            .background(if (isTracking) Brush.horizontalGradient(listOf(Color(0xFF1E1B4B), Color(0xFF0F172A))) else SleepGradient)
+            .clickable { onStartSleep() }
             .padding(18.dp)
     ) {
         Row(
@@ -325,14 +333,26 @@ fun QuickSleepCard(onStartSleep: () -> Unit) {
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (isTracking) {
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .clip(CircleShape)
+                                .background(BrandSecondary)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                    Text(
+                        text = if (isTracking) "Сон отслеживается сейчас" else "Идёте спать прямо сейчас?",
+                        color = Color.White,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 17.sp
+                    )
+                }
+                Spacer(Modifier.height(2.dp))
                 Text(
-                    text = "Идёте спать прямо сейчас?",
-                    color = Color.White,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 17.sp
-                )
-                Text(
-                    text = "Приложение начнет анализ дыхания и фаз сна",
+                    text = if (isTracking) "Нажмите, чтобы открыть таймер и управление сном" else "Приложение начнет анализ дыхания и фаз сна",
                     color = Color.White.copy(alpha = 0.85f),
                     fontSize = 12.sp
                 )
@@ -340,13 +360,20 @@ fun QuickSleepCard(onStartSleep: () -> Unit) {
             Spacer(Modifier.width(12.dp))
             Button(
                 onClick = onStartSleep,
-                colors = ButtonDefaults.buttonColors(containerColor = Color.White, contentColor = Color(0xFF0F172A)),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (isTracking) BrandSecondary else Color.White,
+                    contentColor = if (isTracking) Color.White else Color(0xFF0F172A)
+                ),
                 shape = RoundedCornerShape(12.dp),
                 contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
             ) {
-                Icon(Icons.Default.Bedtime, contentDescription = null, modifier = Modifier.size(16.dp))
+                Icon(
+                    if (isTracking) Icons.Default.GraphicEq else Icons.Default.Bedtime,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp)
+                )
                 Spacer(Modifier.width(6.dp))
-                Text("Баиньки", fontWeight = FontWeight.Bold)
+                Text(if (isTracking) "Экран сна" else "Баиньки", fontWeight = FontWeight.Bold)
             }
         }
     }

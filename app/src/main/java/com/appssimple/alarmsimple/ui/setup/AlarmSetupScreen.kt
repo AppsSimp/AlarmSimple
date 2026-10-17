@@ -478,11 +478,26 @@ fun AlarmSetupScreen(
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
                             ) {
                                 listOf(15, 20, 30, 45).forEach { window ->
-                                    FilterChip(
-                                        selected = state.smartWakeWindowMinutes == window,
-                                        onClick = { viewModel.setSmartWakeWindow(window) },
-                                        label = { Text("±$window мин", fontSize = 12.sp) }
-                                    )
+                                    val isSelected = state.smartWakeWindowMinutes == window
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(38.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(
+                                                if (isSelected) BrandPrimary
+                                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                            )
+                                            .clickable { viewModel.setSmartWakeWindow(window) },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = "±$window м",
+                                            fontSize = 13.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                             }
                         }
