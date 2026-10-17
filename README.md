@@ -1,24 +1,25 @@
+<div align="center">
+
 # 🔔 AlarmSimple
 
-<p align="center">
-  <b>Бесплатный умный будильник с открытым исходным кодом</b><br>
-  Трекинг реального сна, умное пробуждение в легкую фазу, запись ночных звуков и квесты любой сложности.
-</p>
+[![RU](https://img.shields.io/badge/Язык-Русский-blue?style=for-the-badge)](README.md)
+[![EN](https://img.shields.io/badge/Language-English-lightgrey?style=for-the-badge)](README_EN.md)
 
-<p align="center">
-  <b>Русский</b> | <a href="README_EN.md">English</a>
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License">
-  <img src="https://img.shields.io/badge/Platform-Android-green.svg" alt="Platform">
-  <img src="https://img.shields.io/badge/Kotlin-2.1-purple.svg" alt="Kotlin">
-  <img src="https://img.shields.io/badge/No_Ads-100%25-brightgreen.svg" alt="No Ads">
-</p>
+**Бесплатный умный будильник без рекламы с открытым исходным кодом**  
+*Трекинг реального сна, мягкое пробуждение в легкую фазу, запись ночных звуков и квесты любой сложности.*
 
 ---
 
-**AlarmSimple** — это умный будильник без рекламы, подписок и трекеров. Приложение помогает легче просыпаться за счет анализа физиологических циклов и гарантированно поднимает с кровати с помощью системы заданий (квестов) и защиты от отключения звука.
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Android-green.svg)](https://android.com)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.1-purple.svg)](https://kotlinlang.org)
+[![No Ads](https://img.shields.io/badge/No_Ads-100%25-brightgreen.svg)]()
+
+</div>
+
+---
+
+**AlarmSimple** — это умный будильник без рекламы, платных подписок и скрытых трекеров. Приложение помогает легче просыпаться за счет анализа физиологических циклов сна и гарантированно поднимает с кровати с помощью системы заданий (квестов) и защиты от отключения звука.
 
 ---
 

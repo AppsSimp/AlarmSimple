@@ -1,20 +1,21 @@
+<div align="center">
+
 # 🔔 AlarmSimple
 
-<p align="center">
-  <b>Free and Open Source Smart Alarm Clock</b><br>
-  Real sleep tracking, smart wake-up during light sleep phases, nocturnal sound recorder, and wake-up quests.
-</p>
+[![RU](https://img.shields.io/badge/Language-Russian-lightgrey?style=for-the-badge)](README.md)
+[![EN](https://img.shields.io/badge/Language-English-blue?style=for-the-badge)](README_EN.md)
 
-<p align="center">
-  <a href="README.md">Русский</a> | <b>English</b>
-</p>
+**Free and Open Source Smart Alarm Clock**  
+*Real sleep tracking, smart wake-up during light sleep phases, nocturnal sound recorder, and wake-up quests.*
 
-<p align="center">
-  <img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License">
-  <img src="https://img.shields.io/badge/Platform-Android-green.svg" alt="Platform">
-  <img src="https://img.shields.io/badge/Kotlin-2.1-purple.svg" alt="Kotlin">
-  <img src="https://img.shields.io/badge/No_Ads-100%25-brightgreen.svg" alt="No Ads">
-</p>
+---
+
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/Platform-Android-green.svg)](https://android.com)
+[![Kotlin](https://img.shields.io/badge/Kotlin-2.1-purple.svg)](https://kotlinlang.org)
+[![No Ads](https://img.shields.io/badge/No_Ads-100%25-brightgreen.svg)]()
+
+</div>
 
 ---
 
