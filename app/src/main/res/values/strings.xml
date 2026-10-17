@@ -1,0 +1,75 @@
+<resources>
+    <string name="app_name">AlarmSimple</string>
+    
+    <!-- Notification channels -->
+    <string name="channel_alarm_name">Alarm</string>
+    <string name="channel_alarm_description">Alarm ringing notifications</string>
+    <string name="channel_tracking_name">Sleep Tracking</string>
+    <string name="channel_tracking_description">Ongoing notification while tracking sleep</string>
+    
+    <!-- Alarm setup -->
+    <string name="mode_classic">Classic</string>
+    <string name="mode_duration">Sleep Duration</string>
+    <string name="smart_wake">Smart Wake-Up</string>
+    <string name="smart_wake_desc">Wake up in light sleep phase within a time window</string>
+    <string name="wake_window">Wake window</string>
+    <string name="wake_window_minutes">%d min</string>
+    
+    <!-- Quests -->
+    <string name="quest_none">None</string>
+    <string name="quest_nfc">NFC Tag</string>
+    <string name="quest_barcode">Barcode Scan</string>
+    <string name="quest_math">Math Problems</string>
+    <string name="quest_setup">Set Up Quest</string>
+    
+    <!-- Alarm ringing -->
+    <string name="dismiss">Dismiss</string>
+    <string name="give_5_minutes">Give 5 Minutes</string>
+    <string name="snooze_minutes">Snooze %d min</string>
+    <string name="complete_quest">Complete the quest to dismiss</string>
+    
+    <!-- Math quest -->
+    <string name="solve_problem">Solve: %s</string>
+    <string name="problem_progress">%1$d of %2$d</string>
+    <string name="time_remaining">%d sec</string>
+    <string name="wrong_answer">Wrong! Starting over…</string>
+    <string name="timeout">Time\'s up! Starting over…</string>
+    
+    <!-- Siren mode -->
+    <string name="siren_mode">Complete the quest to stop the alarm!</string>
+    
+    <!-- Statistics -->
+    <string name="sleep_stats">Sleep Statistics</string>
+    <string name="fell_asleep_at">Fell asleep at</string>
+    <string name="woke_up_at">Woke up at</string>
+    <string name="total_sleep">Total sleep</string>
+    <string name="sleep_efficiency">Sleep efficiency</string>
+    <string name="disturbances">Disturbances</string>
+    <string name="hours_short">%1$dh %2$dm</string>
+    
+    <!-- Settings -->
+    <string name="settings">Settings</string>
+    <string name="history_retention">History retention</string>
+    <string name="days_count">%d days</string>
+    <string name="unlimited">Unlimited</string>
+    <string name="volume_lock">Lock volume at maximum</string>
+    <string name="volume_lock_desc">Prevent lowering volume with hardware buttons during alarm</string>
+    <string name="siren_enabled">Siren mode</string>
+    <string name="siren_desc">Loud alarm if quest isn\'t completed in 5 minutes</string>
+    <string name="snooze_duration">Snooze duration</string>
+    
+    <!-- Onboarding -->
+    <string name="onboarding_welcome">Welcome to AlarmSimple</string>
+    <string name="onboarding_tracking">Smart Sleep Tracking</string>
+    <string name="onboarding_tracking_desc">Place your phone on the mattress. The app tracks your movements and breathing to determine sleep phases.</string>
+    <string name="onboarding_wake">Wake Up Gently</string>
+    <string name="onboarding_wake_desc">Set a smart wake window and the alarm will find the best moment to wake you in light sleep.</string>
+    <string name="onboarding_quests">Dismissal Quests</string>
+    <string name="onboarding_quests_desc">Can\'t get out of bed? Set an NFC tag, barcode, or math problems to force yourself awake.</string>
+    <string name="onboarding_permissions">Permissions</string>
+    <string name="onboarding_permissions_desc">We need microphone and sensor access to track your sleep. No audio is stored — everything is analyzed in real time.</string>
+    <string name="get_started">Get Started</string>
+    <string name="next">Next</string>
+    <string name="skip">Skip</string>
+    <string name="grant_permissions">Grant Permissions</string>
+</resources>

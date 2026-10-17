@@ -1,0 +1,66 @@
+<resources>
+    <string name="app_name">AlarmSimple</string>
+    
+    <string name="channel_alarm_name">Будильник</string>
+    <string name="channel_alarm_description">Уведомления о срабатывании будильника</string>
+    <string name="channel_tracking_name">Трекинг сна</string>
+    <string name="channel_tracking_description">Постоянное уведомление во время отслеживания сна</string>
+    
+    <string name="mode_classic">Классический</string>
+    <string name="mode_duration">По длительности сна</string>
+    <string name="smart_wake">Умное пробуждение</string>
+    <string name="smart_wake_desc">Пробуждение в лёгкой фазе сна в заданном временном окне</string>
+    <string name="wake_window">Окно пробуждения</string>
+    <string name="wake_window_minutes">%d мин</string>
+    
+    <string name="quest_none">Без квеста</string>
+    <string name="quest_nfc">NFC-метка</string>
+    <string name="quest_barcode">Штрихкод</string>
+    <string name="quest_math">Математика</string>
+    <string name="quest_setup">Настроить квест</string>
+    
+    <string name="dismiss">Выключить</string>
+    <string name="give_5_minutes">Дать 5 минут</string>
+    <string name="snooze_minutes">Отложить на %d мин</string>
+    <string name="complete_quest">Выполните квест чтобы выключить</string>
+    
+    <string name="solve_problem">Решите: %s</string>
+    <string name="problem_progress">%1$d из %2$d</string>
+    <string name="time_remaining">%d сек</string>
+    <string name="wrong_answer">Неверно! Начинаем сначала…</string>
+    <string name="timeout">Время вышло! Начинаем сначала…</string>
+    
+    <string name="siren_mode">Выполните квест чтобы выключить сирену!</string>
+    
+    <string name="sleep_stats">Статистика сна</string>
+    <string name="fell_asleep_at">Уснул в</string>
+    <string name="woke_up_at">Проснулся в</string>
+    <string name="total_sleep">Общее время сна</string>
+    <string name="sleep_efficiency">Эффективность сна</string>
+    <string name="disturbances">Пробуждения</string>
+    <string name="hours_short">%1$dч %2$dм</string>
+    
+    <string name="settings">Настройки</string>
+    <string name="history_retention">Хранение истории</string>
+    <string name="days_count">%d дней</string>
+    <string name="unlimited">Без ограничений</string>
+    <string name="volume_lock">Блокировка громкости</string>
+    <string name="volume_lock_desc">Запретить уменьшение громкости кнопками во время будильника</string>
+    <string name="siren_enabled">Режим сирены</string>
+    <string name="siren_desc">Громкий сигнал если квест не выполнен за 5 минут</string>
+    <string name="snooze_duration">Длительность отложения</string>
+    
+    <string name="onboarding_welcome">Добро пожаловать в AlarmSimple</string>
+    <string name="onboarding_tracking">Умный трекинг сна</string>
+    <string name="onboarding_tracking_desc">Положите телефон на матрас. Приложение отслеживает движения и дыхание для определения фаз сна.</string>
+    <string name="onboarding_wake">Мягкое пробуждение</string>
+    <string name="onboarding_wake_desc">Задайте окно пробуждения — будильник найдёт лучший момент для пробуждения в лёгкой фазе сна.</string>
+    <string name="onboarding_quests">Квесты на пробуждение</string>
+    <string name="onboarding_quests_desc">Не можете встать? Настройте NFC-метку, штрихкод или математические задачи чтобы проснуться наверняка.</string>
+    <string name="onboarding_permissions">Разрешения</string>
+    <string name="onboarding_permissions_desc">Нам нужен доступ к микрофону и сенсорам для отслеживания сна. Аудио не сохраняется — всё анализируется в реальном времени.</string>
+    <string name="get_started">Начать</string>
+    <string name="next">Далее</string>
+    <string name="skip">Пропустить</string>
+    <string name="grant_permissions">Предоставить разрешения</string>
+</resources>
