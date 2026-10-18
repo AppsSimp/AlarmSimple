@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.media.RingtoneManager
 import android.net.Uri
+import java.util.Calendar
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -386,8 +387,16 @@ fun AlarmSetupScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalAlignment = Alignment.CenterHorizontally
                             ) {
+                                val hours = state.durationHours
+                                val mins = state.durationMinutesPart
+                                val durationText = when {
+                                    hours > 0 && mins > 0 -> "$hours ч $mins мин"
+                                    hours > 0 -> "$hours ч"
+                                    else -> "$mins мин"
+                                }
+
                                 Text(
-                                    text = "${state.durationHours} ч ${if (state.durationMinutesPart > 0) "${state.durationMinutesPart} мин" else ""}",
+                                    text = durationText,
                                     fontSize = 38.sp,
                                     fontWeight = FontWeight.Bold,
                                     color = BrandSecondary
@@ -398,21 +407,96 @@ fun AlarmSetupScreen(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                     textAlign = TextAlign.Center
                                 )
-                                Spacer(Modifier.height(12.dp))
+
+                                Spacer(Modifier.height(10.dp))
+
+                                // Быстрые пресеты
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                ) {
+                                    listOf(
+                                        30 to "30м",
+                                        45 to "45м",
+                                        90 to "1.5ч",
+                                        180 to "3ч",
+                                        450 to "7.5ч"
+                                    ).forEach { (minsPreset, label) ->
+                                        val isSel = state.durationMinutes == minsPreset
+                                        Box(
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(34.dp)
+                                                .clip(RoundedCornerShape(8.dp))
+                                                .background(
+                                                    if (isSel) BrandSecondary
+                                                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                                )
+                                                .clickable { viewModel.setDuration(minsPreset) },
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Text(
+                                                text = label,
+                                                fontSize = 12.sp,
+                                                fontWeight = if (isSel) FontWeight.Bold else FontWeight.Medium,
+                                                color = if (isSel) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                }
+
+                                Spacer(Modifier.height(8.dp))
+
                                 Slider(
                                     value = state.durationMinutes.toFloat(),
-                                    onValueChange = { viewModel.setDuration(it.toInt()) },
-                                    valueRange = 240f..600f,
-                                    steps = 23,
+                                    onValueChange = { raw ->
+                                        // Округляем до 5 минут для аккуратности
+                                        val rounded = ((raw / 5).toInt() * 5).coerceIn(30, 600)
+                                        viewModel.setDuration(rounded)
+                                    },
+                                    valueRange = 30f..600f,
+                                    steps = 113, // шаг 5 минут: (600 - 30) / 5 - 1 = 113
                                     modifier = Modifier.fillMaxWidth()
                                 )
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
                                     horizontalArrangement = Arrangement.SpaceBetween
                                 ) {
-                                    Text("4 часа", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
-                                    Text("7.5 ч (норма)", style = MaterialTheme.typography.labelSmall, color = BrandSecondary, fontWeight = FontWeight.Bold)
-                                    Text("10 часов", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                                    Text("30 мин", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                                    Text("1.5 ч (1 цикл)", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                                    Text("7.5 ч (5 циклов)", style = MaterialTheme.typography.labelSmall, color = BrandSecondary, fontWeight = FontWeight.Bold)
+                                    Text("10 ч", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                                }
+
+                                if (state.durationMinutes < 90) {
+                                    Spacer(Modifier.height(10.dp))
+                                    Card(
+                                        colors = CardDefaults.cardColors(
+                                            containerColor = Color(0xFFF59E0B).copy(alpha = 0.12f)
+                                        ),
+                                        shape = RoundedCornerShape(10.dp),
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Row(
+                                            modifier = Modifier.padding(10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Info,
+                                                contentDescription = null,
+                                                tint = Color(0xFFF59E0B),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            Spacer(Modifier.width(8.dp))
+                                            Text(
+                                                text = "Длительность меньше одного полного цикла сна (~90 мин). Умное пробуждение в фазе легкого сна может быть недоступно — будильник сработает точно по истечении времени.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = Color(0xFFFCD34D),
+                                                fontSize = 12.sp,
+                                                lineHeight = 16.sp
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -544,6 +628,49 @@ fun AlarmSetupScreen(
                                             fontSize = 13.sp,
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                             color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+
+                            // Проверка для классического режима: если до будильника осталось меньше 90 минут
+                            val calNow = Calendar.getInstance()
+                            val nowMin = calNow.get(Calendar.HOUR_OF_DAY) * 60 + calNow.get(Calendar.MINUTE)
+                            val targetMin = state.targetHour * 60 + state.targetMinute
+                            val diffMin = if (targetMin >= nowMin) targetMin - nowMin else (1440 - nowMin) + targetMin
+
+                            val isShortSleep = if (state.mode == AlarmMode.DURATION) {
+                                state.durationMinutes < 90
+                            } else {
+                                state.repeatDays.isEmpty() && diffMin in 1..89
+                            }
+
+                            if (isShortSleep) {
+                                Spacer(Modifier.height(10.dp))
+                                Card(
+                                    colors = CardDefaults.cardColors(
+                                        containerColor = Color(0xFFF59E0B).copy(alpha = 0.12f)
+                                    ),
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(10.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Icon(
+                                            Icons.Default.Info,
+                                            contentDescription = null,
+                                            tint = Color(0xFFF59E0B),
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Text(
+                                            text = "До пробуждения менее 90 минут (меньше цикла сна). Определение лёгкой фазы сна может не сработать вовремя — будильник прозвонит в установленное время.",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = Color(0xFFFCD34D),
+                                            fontSize = 12.sp,
+                                            lineHeight = 16.sp
                                         )
                                     }
                                 }
