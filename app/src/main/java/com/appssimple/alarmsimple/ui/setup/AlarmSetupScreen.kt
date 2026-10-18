@@ -277,13 +277,73 @@ fun AlarmSetupScreen(
                             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                             Spacer(Modifier.height(14.dp))
 
-                            // Выбор дней повторения
+                            // Выбор повторения
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = "Повтор будильника",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                if (state.repeatDays.isNotEmpty()) {
+                                    TextButton(
+                                        onClick = { viewModel.clearRepeatDays() },
+                                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp)
+                                    ) {
+                                        Text("Сбросить", fontSize = 12.sp, color = MaterialTheme.colorScheme.primary)
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(6.dp))
+
+                            // Быстрые пресеты: Однократно на ближайшее время, Каждый день, По будням
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                val isOnce = state.repeatDays.isEmpty()
+                                val isDaily = state.repeatDays.size == 7
+                                val isWorkdays = state.repeatDays == setOf(1, 2, 3, 4, 5)
+
+                                FilterChip(
+                                    selected = isOnce,
+                                    onClick = { viewModel.clearRepeatDays() },
+                                    label = { Text("На ближайшее время", fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = BrandPrimary,
+                                        selectedLabelColor = Color.White
+                                    )
+                                )
+                                FilterChip(
+                                    selected = isDaily,
+                                    onClick = { viewModel.setRepeatDays((1..7).toSet()) },
+                                    label = { Text("Ежедневно", fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = BrandPrimary,
+                                        selectedLabelColor = Color.White
+                                    )
+                                )
+                                FilterChip(
+                                    selected = isWorkdays,
+                                    onClick = { viewModel.setRepeatDays(setOf(1, 2, 3, 4, 5)) },
+                                    label = { Text("Будни", fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = BrandPrimary,
+                                        selectedLabelColor = Color.White
+                                    )
+                                )
+                            }
+
+                            Spacer(Modifier.height(10.dp))
                             Text(
-                                text = "Повторять по дням",
-                                style = MaterialTheme.typography.titleSmall,
-                                fontWeight = FontWeight.SemiBold
+                                text = "Или выберите конкретные дни:",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                            Spacer(Modifier.height(8.dp))
+                            Spacer(Modifier.height(6.dp))
 
                             val days = listOf(
                                 1 to "Пн",

@@ -110,7 +110,10 @@ class AlarmFiringService : Service() {
 
     private fun startForegroundWithFullScreenIntent(alarmId: Long) {
         val fullScreenIntent = Intent(this, AlarmRingingActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                    Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                    Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                    Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
             putExtra(EXTRA_ALARM_ID, alarmId)
         }
         val fullScreenPendingIntent = PendingIntent.getActivity(
@@ -129,12 +132,21 @@ class AlarmFiringService : Service() {
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
             .setOngoing(true)
             .setFullScreenIntent(fullScreenPendingIntent, true)
+            .setContentIntent(fullScreenPendingIntent)
+            .setAutoCancel(false)
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK)
         } else {
             startForeground(NOTIFICATION_ID, notification)
+        }
+
+        // Прямой запуск активити поверх других окон / экрана блокировки
+        try {
+            startActivity(fullScreenIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
