@@ -40,13 +40,13 @@ fun AppNavHost(
         }
         
         composable<Screen.AlarmList> {
-            AlarmListScreen(
+            com.appssimple.alarmsimple.ui.home.MainHomeScreen(
                 onAddAlarm = { navController.navigate(Screen.AlarmSetup()) },
                 onEditAlarm = { id -> navController.navigate(Screen.AlarmSetup(alarmId = id)) },
                 onOpenSettings = { navController.navigate(Screen.Settings) },
-                onOpenHistory = { navController.navigate(Screen.SleepHistory) },
                 onOpenSleepTracking = { navController.navigate(Screen.SleepTracking) },
-                onOpenHelp = { navController.navigate(Screen.Onboarding) }
+                onOpenHelp = { navController.navigate(Screen.Onboarding) },
+                onOpenSession = { id -> navController.navigate(Screen.SleepStats(sessionId = id)) }
             )
         }
         
@@ -60,6 +60,13 @@ fun AppNavHost(
         
         composable<Screen.Settings> {
             SettingsScreen(
+                onNavigateBack = { navController.popBackStack() },
+                onOpenAdminPanel = { navController.navigate(Screen.AdminPanel) }
+            )
+        }
+
+        composable<Screen.AdminPanel> {
+            com.appssimple.alarmsimple.ui.admin.AdminPanelScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

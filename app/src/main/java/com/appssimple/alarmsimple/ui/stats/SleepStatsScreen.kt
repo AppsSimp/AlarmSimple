@@ -142,21 +142,8 @@ fun SleepStatsScreen(
                                 epochs = state.epochs,
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(150.dp)
+                                    .height(170.dp)
                             )
-
-                            Spacer(Modifier.height(14.dp))
-
-                            // Легенда
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                PhaseLegendBadge("Глубокий", Color(0xFF2563EB))
-                                PhaseLegendBadge("Легкий", Color(0xFF10B981))
-                                PhaseLegendBadge("REM", Color(0xFF8B5CF6))
-                                PhaseLegendBadge("Пробужд.", Color(0xFFF43F5E))
-                            }
                         }
                     }
                 }
@@ -249,48 +236,129 @@ fun HypnogramChart(
     modifier: Modifier = Modifier
 ) {
     val phaseColors = mapOf(
-        SleepPhase.DEEP.name to Color(0xFF2563EB),
-        SleepPhase.LIGHT.name to Color(0xFF10B981),
+        SleepPhase.AWAKE.name to Color(0xFFF43F5E),
         SleepPhase.REM.name to Color(0xFF8B5CF6),
-        SleepPhase.AWAKE.name to Color(0xFFF43F5E)
+        SleepPhase.LIGHT.name to Color(0xFF10B981),
+        SleepPhase.DEEP.name to Color(0xFF2563EB)
     )
 
-    Canvas(modifier = modifier) {
-        if (epochs.isEmpty()) return@Canvas
+    val phasesList = listOf(
+        "Пробужд." to SleepPhase.AWAKE.name,
+        "REM" to SleepPhase.REM.name,
+        "Легкий" to SleepPhase.LIGHT.name,
+        "Глубокий" to SleepPhase.DEEP.name
+    )
 
-        val w = size.width
-        val h = size.height
-        val stepX = w / epochs.size
+    val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
+    val startStr = if (epochs.isNotEmpty()) timeFormat.format(Date(epochs.first().timestampMs)) else "--:--"
+    val endStr = if (epochs.isNotEmpty()) timeFormat.format(Date(epochs.last().timestampMs)) else "--:--"
 
-        val yMap = mapOf(
-            SleepPhase.AWAKE.name to 0.12f * h,
-            SleepPhase.REM.name to 0.38f * h,
-            SleepPhase.LIGHT.name to 0.65f * h,
-            SleepPhase.DEEP.name to 0.90f * h
-        )
+    Column(modifier = modifier) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .weight(1f)
+        ) {
+            // Вертикальные названия фаз слева
+            Column(
+                modifier = Modifier
+                    .width(72.dp)
+                    .fillMaxHeight(),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                phasesList.forEach { (label, phaseKey) ->
+                    val color = phaseColors[phaseKey] ?: Color.White
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(vertical = 2.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(color)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = label,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
 
-        // Draw graph path
-        val path = Path()
-        epochs.forEachIndexed { index, epoch ->
-            val x = index * stepX
-            val y = yMap[epoch.phase] ?: (0.65f * h)
-            if (index == 0) path.moveTo(x, y)
-            else path.lineTo(x, y)
+            Spacer(Modifier.width(8.dp))
+
+            // Полотно графика с прямоугольниками фаз
+            Canvas(
+                modifier = Modifier
+                    .weight(1f)
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Color.White.copy(alpha = 0.04f))
+            ) {
+                if (epochs.isEmpty()) return@Canvas
+
+                val w = size.width
+                val h = size.height
+                val stepX = w / epochs.size
+                val rowHeight = h / phasesList.size
+
+                // Горизонтальные направляющие линии для каждой строки фазы
+                phasesList.indices.forEach { i ->
+                    val y = i * rowHeight
+                    drawLine(
+                        color = Color.White.copy(alpha = 0.06f),
+                        start = Offset(0f, y),
+                        end = Offset(w, y),
+                        strokeWidth = 1.dp.toPx()
+                    )
+                }
+
+                // Рисуем прямоугольники для каждой эпохи в соответствующей строке
+                epochs.forEachIndexed { index, epoch ->
+                    val rowIdx = when (epoch.phase) {
+                        SleepPhase.AWAKE.name -> 0
+                        SleepPhase.REM.name -> 1
+                        SleepPhase.LIGHT.name -> 2
+                        SleepPhase.DEEP.name -> 3
+                        else -> 2
+                    }
+                    val color = phaseColors[epoch.phase] ?: Color(0xFF10B981)
+                    val topY = rowIdx * rowHeight + 2.dp.toPx()
+                    val blockHeight = (rowHeight - 4.dp.toPx()).coerceAtLeast(2.dp.toPx())
+
+                    drawRect(
+                        color = color,
+                        topLeft = Offset(index * stepX, topY),
+                        size = Size(stepX + 0.6f, blockHeight)
+                    )
+                }
+            }
         }
 
-        drawPath(
-            path = path,
-            color = Color(0xFFA5B4FC),
-            style = Stroke(width = 2.5.dp.toPx())
-        )
+        Spacer(Modifier.height(8.dp))
 
-        // Colored timeline strip at bottom
-        epochs.forEachIndexed { index, epoch ->
-            val color = phaseColors[epoch.phase] ?: Color.Gray
-            drawRect(
-                color = color.copy(alpha = 0.85f),
-                topLeft = Offset(index * stepX, h - 6.dp.toPx()),
-                size = Size(stepX + 0.5f, 6.dp.toPx())
+        // Горизонтальные подписи времени снизу: слева начало, справа конец сна
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = 80.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = "Начало $startStr",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Text(
+                text = "Конец $endStr",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }

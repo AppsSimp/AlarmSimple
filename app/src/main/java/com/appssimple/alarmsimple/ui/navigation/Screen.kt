@@ -26,4 +26,7 @@ sealed interface Screen {
     
     @Serializable
     data object SleepTracking : Screen
+
+    @Serializable
+    data object AdminPanel : Screen
 }
