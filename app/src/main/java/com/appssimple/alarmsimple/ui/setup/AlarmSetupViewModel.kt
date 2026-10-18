@@ -38,6 +38,7 @@ data class AlarmSetupUiState(
     val volumeLockEnabled: Boolean = false,
     val snoozeMinutes: Int = 5,
     val repeatDays: Set<Int> = emptySet(), // 1=Пн, 2=Вт, ..., 7=Вс
+    val repeatIntervalWeeks: Int = 1, // 1 = каждую неделю, 2 = через неделю, 3 = через 2 недели
     val ringtoneUri: String? = null,
     val ringtoneTitle: String = "По умолчанию (Системный)",
     val isActive: Boolean = true,
@@ -129,6 +130,7 @@ class AlarmSetupViewModel @Inject constructor(
                     volumeLockEnabled = alarm.volumeLockEnabled,
                     snoozeMinutes = alarm.snoozeDurationMinutes,
                     repeatDays = repeatDays,
+                    repeatIntervalWeeks = alarm.repeatIntervalWeeks,
                     ringtoneUri = alarm.ringtoneUri,
                     ringtoneTitle = ringtoneTitle,
                     isActive = alarm.isActive,
@@ -150,6 +152,10 @@ class AlarmSetupViewModel @Inject constructor(
         }
     }
 
+    fun setRepeatIntervalWeeks(weeks: Int) {
+        _uiState.update { it.copy(repeatIntervalWeeks = weeks) }
+    }
+
     fun setMode(mode: AlarmMode) { _uiState.update { it.copy(mode = mode) } }
     fun setDuration(minutes: Int) { _uiState.update { it.copy(durationMinutes = minutes) } }
     fun setTime(hour: Int, minute: Int) { _uiState.update { it.copy(targetHour = hour, targetMinute = minute) } }
@@ -159,7 +165,7 @@ class AlarmSetupViewModel @Inject constructor(
         _uiState.update {
             it.copy(
                 questType = type,
-                // Сбрасываем старые данные квеста если меняется тип
+                // Сбрасываем старые данные если меняется тип
                 questData = if (type == it.questType) it.questData else null
             )
         }
@@ -185,7 +191,8 @@ class AlarmSetupViewModel @Inject constructor(
                     alarmScheduler.calculateNextTriggerTime(
                         hour = state.targetHour,
                         minute = state.targetMinute,
-                        repeatDays = state.repeatDays
+                        repeatDays = state.repeatDays,
+                        repeatIntervalWeeks = state.repeatIntervalWeeks
                     )
                 } else null
 
@@ -200,10 +207,11 @@ class AlarmSetupViewModel @Inject constructor(
                     smartWakeWindowMinutes = state.smartWakeWindowMinutes,
                     questType = state.questType.name,
                     questData = state.questData,
-                    sirenEnabled = state.sirenEnabled,
+                    sirenEnabled = false, // Режим сирены отключен по просьбе пользователя
                     volumeLockEnabled = state.volumeLockEnabled,
                     snoozeDurationMinutes = state.snoozeMinutes,
                     repeatDays = repeatDaysJson,
+                    repeatIntervalWeeks = state.repeatIntervalWeeks,
                     ringtoneUri = state.ringtoneUri,
                     isActive = state.isActive,
                     label = state.label
@@ -214,6 +222,12 @@ class AlarmSetupViewModel @Inject constructor(
 
                 if (state.isActive && targetTimeMs != null) {
                     alarmScheduler.scheduleAlarm(targetTimeMs, finalId)
+
+                    // Если включен предохранитель в настройках — ставим системный будильник на +5 минут
+                    val isBackupAlarmEnabled = userPreferences.backupSystemAlarmEnabled.first()
+                    if (isBackupAlarmEnabled) {
+                        alarmScheduler.setSystemBackupAlarm(targetTimeMs, "Страховка: AlarmSimple")
+                    }
                 }
 
                 _uiState.update { it.copy(isSaving = false) }

@@ -359,18 +359,18 @@ fun CoachMarksOverlay(
 
         when (step) {
             1 -> {
-                title = "🌙 Режим «Баиньки»"
+                title = "🌙 Быстрый сон"
                 description = "Хотите отслеживать фазы сна без звукового будильника? Нажмите эту карточку прямо перед сном — умный трекинг запишет фазы сна и пробуждения."
                 alignment = Alignment.TopCenter
             }
             2 -> {
                 title = "❓ Справочник и подсказки"
-                description = "Здесь собрана интерактивная инструкция со всеми фишками: как привязать банковскую карту к NFC, сканировать штрихкод или настроить умное окно пробуждения."
+                description = "Здесь собрана интерактивная инструкция со всеми возможностями: как привязать NFC-метку, сканировать штрихкод или настроить умное окно пробуждения."
                 alignment = Alignment.TopEnd
             }
             3 -> {
                 title = "➕ Создание умного будильника"
-                description = "Нажмите здесь, чтобы создать будильник с мягким пробуждением в лёгкой фазе сна, квестами и сиреной, которую нельзя заглушить кнопками громкости."
+                description = "Нажмите здесь, чтобы создать будильник с мягким пробуждением в лёгкой фазе сна, задачами подтверждения бодрствования и защитой от выключения."
                 alignment = Alignment.BottomCenter
             }
             else -> {
@@ -489,7 +489,7 @@ fun QuickSleepCard(onStartSleep: () -> Unit) {
                 }
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = if (isTracking) "Нажмите, чтобы открыть таймер и управление сном" else "Нажмите «Баиньки», чтобы начать трекинг фаз сна прямо сейчас",
+                    text = if (isTracking) "Нажмите, чтобы открыть таймер и управление сном" else "Нажмите «Спать», чтобы начать трекинг фаз сна прямо сейчас",
                     color = Color.White.copy(alpha = 0.85f),
                     fontSize = 12.sp
                 )
@@ -510,7 +510,7 @@ fun QuickSleepCard(onStartSleep: () -> Unit) {
                     modifier = Modifier.size(16.dp)
                 )
                 Spacer(Modifier.width(6.dp))
-                Text(if (isTracking) "Экран сна" else "Баиньки", fontWeight = FontWeight.Bold)
+                Text(if (isTracking) "Экран сна" else "Спать", fontWeight = FontWeight.Bold)
             }
         }
     }
@@ -649,10 +649,7 @@ fun AlarmItemCard(
                             "MATH" -> "Математика"
                             else -> alarm.questType
                         }
-                        ModernBadge(text = "Квест: $questLabel", color = BrandSecondary)
-                    }
-                    if (alarm.sirenEnabled) {
-                        ModernBadge(text = "Сирена 🚨", color = Color(0xFFF43F5E))
+                        ModernBadge(text = "Задачи: $questLabel", color = BrandSecondary)
                     }
                 }
             }

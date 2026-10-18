@@ -51,6 +51,12 @@ object DatabaseModule {
         }
     }
 
+    private val MIGRATION_2_3 = object : Migration(2, 3) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL("ALTER TABLE `alarms` ADD COLUMN `repeatIntervalWeeks` INTEGER NOT NULL DEFAULT 1")
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AlarmDatabase {
@@ -58,7 +64,7 @@ object DatabaseModule {
             context,
             AlarmDatabase::class.java,
             "alarm_simple.db"
-        ).addMigrations(MIGRATION_1_2)
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
         .build()
     }
     

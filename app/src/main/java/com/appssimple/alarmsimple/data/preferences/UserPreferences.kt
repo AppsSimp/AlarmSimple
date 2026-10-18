@@ -27,6 +27,7 @@ class UserPreferences @Inject constructor(
         val DEFAULT_SMART_WAKE_WINDOW = intPreferencesKey("default_smart_wake_window")
         val DEFAULT_VOLUME_LOCK = booleanPreferencesKey("default_volume_lock")
         val DEFAULT_SIREN_ENABLED = booleanPreferencesKey("default_siren_enabled")
+        val BACKUP_SYSTEM_ALARM_ENABLED = booleanPreferencesKey("backup_system_alarm_enabled")
     }
     
     val onboardingCompleted: Flow<Boolean> = context.dataStore.data
@@ -50,6 +51,9 @@ class UserPreferences @Inject constructor(
     
     val defaultSirenEnabled: Flow<Boolean> = context.dataStore.data
         .map { it[DEFAULT_SIREN_ENABLED] ?: false }
+
+    val backupSystemAlarmEnabled: Flow<Boolean> = context.dataStore.data
+        .map { it[BACKUP_SYSTEM_ALARM_ENABLED] ?: false }
     
     suspend fun setOnboardingCompleted(completed: Boolean) {
         context.dataStore.edit { it[ONBOARDING_COMPLETED] = completed }
@@ -77,5 +81,9 @@ class UserPreferences @Inject constructor(
     
     suspend fun setDefaultSirenEnabled(enabled: Boolean) {
         context.dataStore.edit { it[DEFAULT_SIREN_ENABLED] = enabled }
+    }
+
+    suspend fun setBackupSystemAlarmEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[BACKUP_SYSTEM_ALARM_ENABLED] = enabled }
     }
 }

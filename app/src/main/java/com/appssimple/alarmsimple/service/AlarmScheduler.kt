@@ -44,9 +44,15 @@ class AlarmScheduler @Inject constructor(
     }
 
     /**
-     * Вычисляет следующий миллисекундный таймстемп для будильника с учетом часов, минут и дней повторения (1..7: Пн..Вс).
+     * Вычисляет следующий миллисекундный таймстемп для будильника с учетом часов, минут, дней повторения (1..7: Пн..Вс)
+     * и интервала недель (1 = каждую неделю, 2 = через неделю, 3 = через 2 недели).
      */
-    fun calculateNextTriggerTime(hour: Int, minute: Int, repeatDays: Set<Int>): Long {
+    fun calculateNextTriggerTime(
+        hour: Int,
+        minute: Int,
+        repeatDays: Set<Int>,
+        repeatIntervalWeeks: Int = 1
+    ): Long {
         val now = java.util.Calendar.getInstance()
         val calendar = java.util.Calendar.getInstance().apply {
             set(java.util.Calendar.HOUR_OF_DAY, hour)
@@ -57,14 +63,19 @@ class AlarmScheduler @Inject constructor(
 
         if (repeatDays.isEmpty()) {
             if (calendar.timeInMillis <= now.timeInMillis) {
-                calendar.add(java.util.Calendar.DAY_OF_YEAR, 1)
+                // Если интервал повтора больше 1 недели
+                if (repeatIntervalWeeks > 1) {
+                    calendar.add(java.util.Calendar.WEEK_OF_YEAR, repeatIntervalWeeks)
+                } else {
+                    calendar.add(java.util.Calendar.DAY_OF_YEAR, 1)
+                }
             }
             return calendar.timeInMillis
         }
 
         // Повторение по дням недели (1 = Пн, 2 = Вт, ..., 7 = Вс)
-        // В Calendar: SUNDAY = 1, MONDAY = 2, ..., SATURDAY = 7
-        for (i in 0..7) {
+        val maxDaysSearch = if (repeatIntervalWeeks > 1) 7 * repeatIntervalWeeks else 7
+        for (i in 0..maxDaysSearch) {
             val candidateCal = (calendar.clone() as java.util.Calendar).apply {
                 add(java.util.Calendar.DAY_OF_YEAR, i)
             }
@@ -77,9 +88,44 @@ class AlarmScheduler @Inject constructor(
             }
         }
 
-        // Запасной fallback на завтра
+        // Запасной fallback
         calendar.add(java.util.Calendar.DAY_OF_YEAR, 1)
         return calendar.timeInMillis
+    }
+
+    /**
+     * Ставит страховочный системный будильник через стандартный Android AlarmClock Intent (+5 минут).
+     */
+    fun setSystemBackupAlarm(triggerTimeMs: Long, label: String = "AlarmSimple (Предохранитель)") {
+        try {
+            val backupCal = java.util.Calendar.getInstance().apply {
+                timeInMillis = triggerTimeMs + 5 * 60_000L
+            }
+            val intent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
+                putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, label)
+                putExtra(android.provider.AlarmClock.EXTRA_HOUR, backupCal.get(java.util.Calendar.HOUR_OF_DAY))
+                putExtra(android.provider.AlarmClock.EXTRA_MINUTES, backupCal.get(java.util.Calendar.MINUTE))
+                putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * Отключает системный будильник, когда будильник приложения благополучно сработал.
+     */
+    fun dismissSystemBackupAlarm() {
+        try {
+            val intent = Intent(android.provider.AlarmClock.ACTION_DISMISS_ALARM).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            // Некоторые вендоры не поддерживают ACTION_DISMISS_ALARM без UI
+        }
     }
 
     fun cancelAlarm(alarmId: Long) {

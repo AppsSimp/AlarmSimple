@@ -328,16 +328,56 @@ fun AlarmSetupScreen(
                                 }
                             }
 
+                            Spacer(Modifier.height(10.dp))
+
+                            // Интервал повторения: каждую неделю / через неделю / через две недели
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                listOf(
+                                    1 to "Каждую нед.",
+                                    2 to "Через неделю",
+                                    3 to "Через 2 нед."
+                                ).forEach { (interval, label) ->
+                                    val isSelected = state.repeatIntervalWeeks == interval
+                                    Box(
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(36.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .background(
+                                                if (isSelected) BrandPrimary
+                                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                            )
+                                            .clickable { viewModel.setRepeatIntervalWeeks(interval) },
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        Text(
+                                            text = label,
+                                            fontSize = 12.sp,
+                                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                                            color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                }
+                            }
+
                             Spacer(Modifier.height(8.dp))
-                            val repeatSummary = when {
+                            val baseSummary = when {
                                 state.repeatDays.isEmpty() -> "Один раз (без повтора)"
                                 state.repeatDays.size == 7 -> "Каждый день"
                                 state.repeatDays == setOf(1, 2, 3, 4, 5) -> "Только по будням (Пн-Пт)"
                                 state.repeatDays == setOf(6, 7) -> "Только по выходным (Сб-Вс)"
                                 else -> "Выбрано дней: ${state.repeatDays.size}"
                             }
+                            val intervalSummary = when (state.repeatIntervalWeeks) {
+                                2 -> " • повтор через неделю"
+                                3 -> " • повтор через 2 недели"
+                                else -> ""
+                            }
                             Text(
-                                text = repeatSummary,
+                                text = baseSummary + intervalSummary,
                                 style = MaterialTheme.typography.labelSmall,
                                 color = BrandPrimaryLight
                             )
@@ -387,7 +427,10 @@ fun AlarmSetupScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            Row(
+                                modifier = Modifier.weight(1f, fill = false),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
                                 Box(
                                     modifier = Modifier
                                         .size(38.dp)
@@ -404,10 +447,14 @@ fun AlarmSetupScreen(
                                         text = state.ringtoneTitle,
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Medium
+                                        fontWeight = FontWeight.Medium,
+                                        maxLines = 1,
+                                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                                     )
                                 }
                             }
+
+                            Spacer(Modifier.width(12.dp))
 
                             FilledTonalButton(
                                 onClick = {
@@ -419,9 +466,10 @@ fun AlarmSetupScreen(
                                         putExtra(RingtoneManager.EXTRA_RINGTONE_SHOW_SILENT, false)
                                     }
                                     ringtonePickerLauncher.launch(intent)
-                                }
+                                },
+                                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
                             ) {
-                                Text("Выбрать")
+                                Text("Выбрать", maxLines = 1, softWrap = false)
                             }
                         }
                     }
@@ -504,22 +552,22 @@ fun AlarmSetupScreen(
                     }
                 }
 
-                // Квесты
+                // Подтверждение бодрствования
                 ModernCard {
                     Column {
-                        Text("Квест на отключение", style = MaterialTheme.typography.titleMedium)
+                        Text("Подтверждение бодрствования", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            "Без выполнения квеста будильник не выключится",
+                            "Условие, которое необходимо выполнить для отключения звонка",
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(10.dp))
 
                         val quests = listOf(
-                            QuestType.NONE to "Без квеста (стандартно)",
-                            QuestType.MATH to "Математика",
-                            QuestType.BARCODE to "Штрихкод",
-                            QuestType.NFC to "NFC-метка (или банковская карта)"
+                            QuestType.NONE to "Обычное отключение (кнопкой)",
+                            QuestType.MATH to "Математические примеры",
+                            QuestType.BARCODE to "Сканирование штрихкода",
+                            QuestType.NFC to "Прикладывание карты или NFC-метки"
                         )
 
                         quests.forEach { (type, title) ->
@@ -699,32 +747,6 @@ fun AlarmSetupScreen(
                         Text("Защита от отключения", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(14.dp))
 
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(modifier = Modifier.weight(1f)) {
-                                Text("Режим сирены", fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    "Включает громкую сирену, если квест не выполнен за 5 минут",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = state.sirenEnabled,
-                                onCheckedChange = viewModel::setSirenEnabled,
-                                colors = SwitchDefaults.colors(
-                                    checkedThumbColor = Color.White,
-                                    checkedTrackColor = BrandRose,
-                                    uncheckedThumbColor = Color.White,
-                                    uncheckedTrackColor = Color(0xFF2A344E)
-                                )
-                            )
-                        }
-
-                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),

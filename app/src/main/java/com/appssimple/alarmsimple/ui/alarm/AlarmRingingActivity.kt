@@ -390,7 +390,7 @@ fun AlarmRingingScreenContent(
                                 .height(56.dp),
                             colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.primary)
                         ) {
-                            Text("Выполнить квест сейчас", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+                            Text("Выполнить задание", fontSize = 18.sp, fontWeight = FontWeight.Bold)
                         }
 
                         OutlinedButton(

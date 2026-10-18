@@ -11,6 +11,9 @@ interface SleepEpochDao {
     
     @Query("SELECT * FROM sleep_epochs WHERE sessionId = :sessionId ORDER BY timestampMs ASC")
     suspend fun getEpochsForSessionOnce(sessionId: Long): List<SleepEpochEntity>
+
+    @Query("SELECT * FROM sleep_epochs WHERE sessionId = :sessionId ORDER BY timestampMs DESC LIMIT 1")
+    suspend fun getLatestEpochForSession(sessionId: Long): SleepEpochEntity?
     
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertEpoch(epoch: SleepEpochEntity)

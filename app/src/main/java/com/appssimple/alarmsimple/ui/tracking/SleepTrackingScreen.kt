@@ -152,7 +152,7 @@ fun SleepTrackingScreen(
                 Spacer(Modifier.height(16.dp))
 
                 Text(
-                    text = "Положите телефон экраном вниз на матрас рядом с подушкой. Сессии короче 10 минут отсеиваются автоматически.",
+                    text = "Положите телефон рядом с подушкой или на тумбочку. Сессии короче 10 минут отсеиваются автоматически.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     textAlign = TextAlign.Center,

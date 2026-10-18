@@ -101,6 +101,9 @@ class AlarmFiringService : Service() {
                 startVolumeObserver()
             }
 
+            // Будильник приложения успешно сработал -> отключаем системный предохранитель
+            alarmScheduler.dismissSystemBackupAlarm()
+
             playAlarmSound(alarm?.ringtoneUri)
         }
     }
@@ -261,7 +264,8 @@ class AlarmFiringService : Service() {
                         val nextTrigger = alarmScheduler.calculateNextTriggerTime(
                             hour = cal.get(java.util.Calendar.HOUR_OF_DAY),
                             minute = cal.get(java.util.Calendar.MINUTE),
-                            repeatDays = repeatDays
+                            repeatDays = repeatDays,
+                            repeatIntervalWeeks = alarm.repeatIntervalWeeks
                         )
                         alarmDao.updateAlarm(alarm.copy(targetTimeMs = nextTrigger, isActive = true))
                         alarmScheduler.scheduleAlarm(nextTrigger, alarm.id)

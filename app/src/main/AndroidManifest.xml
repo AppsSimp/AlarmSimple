@@ -12,6 +12,7 @@
     <!-- Exact alarms -->
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" android:maxSdkVersion="32" />
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
     
     <!-- Full-screen intent on lock screen -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />

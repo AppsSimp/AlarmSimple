@@ -45,7 +45,7 @@ fun SettingsScreen(
     val defaultSnooze by viewModel.defaultSnoozeMinutes.collectAsState(initial = 5)
     val defaultSmartWake by viewModel.defaultSmartWakeWindow.collectAsState(initial = 30)
     val defaultVolumeLock by viewModel.defaultVolumeLock.collectAsState(initial = false)
-    val defaultSiren by viewModel.defaultSirenEnabled.collectAsState(initial = false)
+    val backupAlarmEnabled by viewModel.backupSystemAlarmEnabled.collectAsState(initial = false)
 
     AppBackground {
         Scaffold(
@@ -137,10 +137,10 @@ fun SettingsScreen(
                     }
                 }
 
-                // Стандартная жесткость
+                // Надежность и предохранитель
                 ModernCard {
                     Column {
-                        Text("Стандартные опции новых будильников", style = MaterialTheme.typography.titleMedium)
+                        Text("Надежность и защита", style = MaterialTheme.typography.titleMedium)
                         Spacer(Modifier.height(12.dp))
 
                         Row(
@@ -149,10 +149,14 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Режим сирены", fontWeight = FontWeight.SemiBold)
-                                Text("Включать сирену по умолчанию", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Системный предохранитель", fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "Заводить резервный системный будильник на 5 минут позже (на случай перезагрузки/сбоя системы). При успешном срабатывании приложения отключается автоматически.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
-                            Switch(checked = defaultSiren, onCheckedChange = viewModel::setDefaultSiren)
+                            Switch(checked = backupAlarmEnabled, onCheckedChange = viewModel::setBackupSystemAlarmEnabled)
                         }
 
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
@@ -164,7 +168,7 @@ fun SettingsScreen(
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("Блокировка громкости", fontWeight = FontWeight.SemiBold)
-                                Text("Блокировать качельку звука", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Text("Блокировать качельку звука во время звонка", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                             Switch(checked = defaultVolumeLock, onCheckedChange = viewModel::setDefaultVolumeLock)
                         }
@@ -205,7 +209,7 @@ class SettingsViewModel @Inject constructor(
     val defaultSnoozeMinutes = userPreferences.defaultSnoozeMinutes
     val defaultSmartWakeWindow = userPreferences.defaultSmartWakeWindow
     val defaultVolumeLock = userPreferences.defaultVolumeLock
-    val defaultSirenEnabled = userPreferences.defaultSirenEnabled
+    val backupSystemAlarmEnabled = userPreferences.backupSystemAlarmEnabled
 
     fun setRetentionDays(days: Int) {
         viewModelScope.launch { userPreferences.setHistoryRetentionDays(days) }
@@ -219,7 +223,7 @@ class SettingsViewModel @Inject constructor(
         viewModelScope.launch { userPreferences.setDefaultVolumeLock(enabled) }
     }
 
-    fun setDefaultSiren(enabled: Boolean) {
-        viewModelScope.launch { userPreferences.setDefaultSirenEnabled(enabled) }
+    fun setBackupSystemAlarmEnabled(enabled: Boolean) {
+        viewModelScope.launch { userPreferences.setBackupSystemAlarmEnabled(enabled) }
     }
 }
