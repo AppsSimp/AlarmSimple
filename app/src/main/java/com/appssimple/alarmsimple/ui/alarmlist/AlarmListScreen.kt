@@ -236,6 +236,107 @@ fun AlarmListScreen(
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     item {
+                        // Баннер ближайшего будильника
+                        val nextAlarmInfo = remember(alarms) {
+                            val now = System.currentTimeMillis()
+                            val activeAlarms = alarms.filter { it.isActive }
+                            val upcomingTimes = activeAlarms.mapNotNull { alarm ->
+                                if (alarm.mode == AlarmMode.DURATION.name) {
+                                    null
+                                } else if (alarm.targetTimeMs != null) {
+                                    val trigger = if (alarm.targetTimeMs > now) {
+                                        alarm.targetTimeMs
+                                    } else {
+                                        val cal = Calendar.getInstance().apply { timeInMillis = alarm.targetTimeMs }
+                                        val alarmCal = Calendar.getInstance().apply {
+                                            set(Calendar.HOUR_OF_DAY, cal.get(Calendar.HOUR_OF_DAY))
+                                            set(Calendar.MINUTE, cal.get(Calendar.MINUTE))
+                                            set(Calendar.SECOND, 0)
+                                            set(Calendar.MILLISECOND, 0)
+                                        }
+                                        if (alarmCal.timeInMillis <= now) {
+                                            alarmCal.add(Calendar.DAY_OF_YEAR, 1)
+                                        }
+                                        alarmCal.timeInMillis
+                                    }
+                                    Pair(alarm, trigger)
+                                } else null
+                            }
+
+                            upcomingTimes.minByOrNull { it.second }
+                        }
+
+                        if (nextAlarmInfo != null) {
+                            val diffMs = nextAlarmInfo.second - System.currentTimeMillis()
+                            if (diffMs > 0) {
+                                val diffHours = diffMs / (1000 * 60 * 60)
+                                val diffMins = (diffMs / (1000 * 60)) % 60
+                                val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(nextAlarmInfo.second))
+                                
+                                val calNow = Calendar.getInstance()
+                                val calAlarm = Calendar.getInstance().apply { timeInMillis = nextAlarmInfo.second }
+                                val dayText = if (calAlarm.get(Calendar.DAY_OF_YEAR) == calNow.get(Calendar.DAY_OF_YEAR)) {
+                                    "сегодня"
+                                } else if (calAlarm.get(Calendar.DAY_OF_YEAR) == calNow.get(Calendar.DAY_OF_YEAR) + 1) {
+                                    "завтра"
+                                } else {
+                                    SimpleDateFormat("d MMM", Locale("ru")).format(Date(nextAlarmInfo.second))
+                                }
+
+                                Surface(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(bottom = 12.dp),
+                                    shape = RoundedCornerShape(16.dp),
+                                    color = BrandPrimary.copy(alpha = 0.12f),
+                                    border = androidx.compose.foundation.BorderStroke(1.dp, BrandPrimary.copy(alpha = 0.35f))
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Box(
+                                            modifier = Modifier
+                                                .size(36.dp)
+                                                .clip(CircleShape)
+                                                .background(BrandPrimary),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            Icon(
+                                                Icons.Default.NotificationsActive,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(20.dp)
+                                            )
+                                        }
+                                        Spacer(Modifier.width(12.dp))
+                                        Column {
+                                            Text(
+                                                text = "Ближайший: $dayText в $timeFormat",
+                                                fontWeight = FontWeight.Bold,
+                                                style = MaterialTheme.typography.bodyLarge,
+                                                color = MaterialTheme.colorScheme.onSurface
+                                            )
+                                            val remainingText = buildString {
+                                                append("через ")
+                                                if (diffHours > 0) append("$diffHours ч ")
+                                                append("$diffMins мин")
+                                                if (nextAlarmInfo.first.label.isNotEmpty()) {
+                                                    append(" • ${nextAlarmInfo.first.label}")
+                                                }
+                                            }
+                                            Text(
+                                                text = remainingText,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = BrandPrimary,
+                                                fontWeight = FontWeight.Medium
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
                         // Быстрый запуск ночного мониторинга
                         QuickSleepCard(
                             onStartSleep = {
@@ -310,6 +411,18 @@ fun AlarmListScreen(
                                 },
                                 onToggleActive = { isActive ->
                                     viewModel.toggleAlarmActive(alarm.id, isActive)
+                                },
+                                onStartSleepForAlarm = {
+                                    val intent = Intent(context, SleepTrackingService::class.java).apply {
+                                        action = SleepTrackingService.ACTION_START_TRACKING
+                                        putExtra(SleepTrackingService.EXTRA_ALARM_ID, alarm.id)
+                                    }
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        context.startForegroundService(intent)
+                                    } else {
+                                        context.startService(intent)
+                                    }
+                                    onOpenSleepTracking()
                                 }
                             )
                         }
@@ -525,7 +638,8 @@ fun AlarmItemCard(
     onSelect: () -> Unit,
     onLongClick: () -> Unit,
     onClick: () -> Unit,
-    onToggleActive: (Boolean) -> Unit
+    onToggleActive: (Boolean) -> Unit,
+    onStartSleepForAlarm: () -> Unit = {}
 ) {
     val isDuration = alarm.mode == AlarmMode.DURATION.name
 
@@ -552,58 +666,59 @@ fun AlarmItemCard(
         borderColor = borderColor,
         contentPadding = PaddingValues(16.dp)
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            if (isSelectionMode) {
-                Checkbox(
-                    checked = isSelected,
-                    onCheckedChange = { onSelect() },
-                    colors = CheckboxDefaults.colors(checkedColor = BrandPrimary)
-                )
-                Spacer(Modifier.width(8.dp))
-            }
-
-            Column(modifier = Modifier.weight(1f)) {
-                // Label if present
-                if (alarm.label.isNotEmpty()) {
-                    Text(
-                        text = alarm.label,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (isSelectionMode) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onSelect() },
+                        colors = CheckboxDefaults.colors(checkedColor = BrandPrimary)
                     )
-                    Spacer(Modifier.height(2.dp))
+                    Spacer(Modifier.width(8.dp))
                 }
 
-                if (isDuration) {
-                    val hours = (alarm.durationMinutes ?: 450) / 60
-                    val mins = (alarm.durationMinutes ?: 450) % 60
-                    Text(
-                        text = "$hours ч ${if (mins > 0) "$mins мин" else ""}",
-                        fontSize = 34.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (alarm.isActive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline
-                    )
-                    Text(
-                        text = "Отсчет только после засыпания",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = BrandSecondary
-                    )
-                } else {
-                    val timeStr = if (alarm.targetTimeMs != null) {
-                        SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(alarm.targetTimeMs))
-                    } else "07:00"
+                Column(modifier = Modifier.weight(1f)) {
+                    // Label if present
+                    if (alarm.label.isNotEmpty()) {
+                        Text(
+                            text = alarm.label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Spacer(Modifier.height(2.dp))
+                    }
 
-                    Text(
-                        text = timeStr,
-                        fontSize = 38.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = if (alarm.isActive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
-                        letterSpacing = (-1).sp
-                    )
-                }
+                    if (isDuration) {
+                        val hours = (alarm.durationMinutes ?: 450) / 60
+                        val mins = (alarm.durationMinutes ?: 450) % 60
+                        Text(
+                            text = "$hours ч ${if (mins > 0) "$mins мин" else ""}",
+                            fontSize = 34.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (alarm.isActive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline
+                        )
+                        Text(
+                            text = "Отсчет только после засыпания",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = BrandSecondary
+                        )
+                    } else {
+                        val timeStr = if (alarm.targetTimeMs != null) {
+                            SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(alarm.targetTimeMs))
+                        } else "07:00"
+
+                        Text(
+                            text = timeStr,
+                            fontSize = 38.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (alarm.isActive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
+                            letterSpacing = (-1).sp
+                        )
+                    }
 
                     val repeatDays = remember(alarm.repeatDays) {
                         runCatching {
@@ -642,24 +757,56 @@ fun AlarmItemCard(
                         if (alarm.smartWakeEnabled) {
                             ModernBadge(text = "Умное окно: ±${alarm.smartWakeWindowMinutes}м", color = BrandPrimary)
                         }
-                    if (alarm.questType != "NONE") {
-                        val questLabel = when (alarm.questType) {
-                            "NFC" -> "NFC"
-                            "BARCODE" -> "Штрихкод"
-                            "MATH" -> "Математика"
-                            else -> alarm.questType
+                        if (alarm.questType != "NONE") {
+                            val questLabel = when (alarm.questType) {
+                                "NFC" -> "NFC"
+                                "BARCODE" -> "Штрихкод"
+                                "MATH" -> "Математика"
+                                else -> alarm.questType
+                            }
+                            ModernBadge(text = "Задачи: $questLabel", color = BrandSecondary)
                         }
-                        ModernBadge(text = "Задачи: $questLabel", color = BrandSecondary)
                     }
+                }
+
+                if (!isSelectionMode) {
+                    Switch(
+                        checked = alarm.isActive,
+                        onCheckedChange = onToggleActive,
+                        colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = BrandPrimary)
+                    )
                 }
             }
 
-            if (!isSelectionMode) {
-                Switch(
-                    checked = alarm.isActive,
-                    onCheckedChange = onToggleActive,
-                    colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = BrandPrimary)
-                )
+            // Кнопка прямого запуска сна для будильников по длительности
+            if (isDuration && !isSelectionMode) {
+                Spacer(Modifier.height(12.dp))
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                Spacer(Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Запустить сон с этим будильником:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Button(
+                        onClick = onStartSleepForAlarm,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = BrandSecondary,
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
+                    ) {
+                        Icon(Icons.Default.Bedtime, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Спать", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                }
             }
         }
     }

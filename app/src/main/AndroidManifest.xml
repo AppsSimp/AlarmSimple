@@ -16,6 +16,7 @@
     
     <!-- Full-screen intent on lock screen -->
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
     
     <!-- WakeLock -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -71,6 +72,8 @@
             android:exported="false"
             android:showOnLockScreen="true"
             android:turnScreenOn="true"
+            android:showWhenLocked="true"
+            android:screenOrientation="portrait"
             android:excludeFromRecents="true"
             android:taskAffinity=""
             android:launchMode="singleInstance"

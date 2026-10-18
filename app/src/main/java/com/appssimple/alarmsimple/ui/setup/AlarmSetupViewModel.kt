@@ -152,6 +152,14 @@ class AlarmSetupViewModel @Inject constructor(
         }
     }
 
+    fun clearRepeatDays() {
+        _uiState.update { it.copy(repeatDays = emptySet()) }
+    }
+
+    fun setRepeatDays(days: Set<Int>) {
+        _uiState.update { it.copy(repeatDays = days) }
+    }
+
     fun setRepeatIntervalWeeks(weeks: Int) {
         _uiState.update { it.copy(repeatIntervalWeeks = weeks) }
     }
