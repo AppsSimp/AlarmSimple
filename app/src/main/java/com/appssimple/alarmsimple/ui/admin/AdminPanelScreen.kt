@@ -95,27 +95,33 @@ fun AdminPanelScreen(
             ) {
                 Spacer(Modifier.height(4.dp))
 
-                // Мгновенный будильник
+                // Кнопка быстрого тестирования на карточках
+                val testRingEnabled by viewModel.testRingButtonsEnabled.collectAsState(initial = false)
                 ModernCard {
                     Column {
-                        Text("Тестирование будильника", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            "Запускает будильник прямо в эту секунду через создание тестового будильника и вызов AlarmFiringService.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(Modifier.height(14.dp))
-
-                        Button(
-                            onClick = { viewModel.triggerInstantAlarm(context) },
+                        Row(
                             modifier = Modifier.fillMaxWidth(),
-                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFE11D48)),
-                            shape = RoundedCornerShape(12.dp)
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Default.Alarm, contentDescription = null)
-                            Spacer(Modifier.width(8.dp))
-                            Text("ЗАЗВОНИТЬ В ТУ ЖЕ СЕКУНДУ", fontWeight = FontWeight.Bold)
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Кнопка «Зазвонить сейчас» на карточках",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "Добавляет на каждый созданный будильник кнопку мгновенного запуска, чтобы проверить именно его мелодию, квест и настройки.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Switch(
+                                checked = testRingEnabled,
+                                onCheckedChange = { viewModel.toggleTestRingButtons(it) }
+                            )
                         }
                     }
                 }
@@ -133,7 +139,7 @@ fun AdminPanelScreen(
                         Spacer(Modifier.height(14.dp))
 
                         Button(
-                            onClick = { viewModel.generateTestSleepHistory() },
+                            onClick = { viewModel.generateTestSleepHistory(context) },
                             modifier = Modifier.fillMaxWidth(),
                             colors = ButtonDefaults.buttonColors(containerColor = BrandPrimary),
                             shape = RoundedCornerShape(12.dp)
@@ -170,11 +176,21 @@ class AdminViewModel @Inject constructor(
     private val sleepSessionDao: SleepSessionDao,
     private val sleepEpochDao: SleepEpochDao,
     private val audioSnippetDao: AudioSnippetDao,
-    private val alarmScheduler: AlarmScheduler
+    private val alarmScheduler: AlarmScheduler,
+    private val userPreferences: com.appssimple.alarmsimple.data.preferences.UserPreferences
 ) : ViewModel() {
+
+    val testRingButtonsEnabled = userPreferences.testRingButtonsEnabled
 
     private val _messageEvent = MutableSharedFlow<String>()
     val messageEvent = _messageEvent.asSharedFlow()
+
+    fun toggleTestRingButtons(enabled: Boolean) {
+        viewModelScope.launch {
+            userPreferences.setTestRingButtonsEnabled(enabled)
+            _messageEvent.emit(if (enabled) "Кнопка «Зазвонить сейчас» включена на карточках!" else "Кнопка «Зазвонить сейчас» скрыта с карточек")
+        }
+    }
 
     fun triggerInstantAlarm(context: Context) {
         viewModelScope.launch {
@@ -206,9 +222,10 @@ class AdminViewModel @Inject constructor(
         }
     }
 
-    fun generateTestSleepHistory() {
-        viewModelScope.launch {
+    fun generateTestSleepHistory(context: Context) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             try {
+                val snippetsDir = java.io.File(context.filesDir, "audio_snippets").apply { mkdirs() }
                 val now = Calendar.getInstance()
                 // Генерируем 14 ночей назад
                 for (daysAgo in 1..14) {
@@ -281,26 +298,30 @@ class AdminViewModel @Inject constructor(
                     }
                     sleepEpochDao.insertEpochs(epochs)
 
-                    // Добавляем пару аудио-записей если был храп или шум
+                    // Добавляем реальные проигрываемые аудио-файлы для тестирования звуков ночи
                     if (snoreMinutes > 0) {
+                        val snoreFile = java.io.File(snippetsDir, "test_snore_${sessionId}.wav")
+                        createSyntheticWavFile(snoreFile, durationSeconds = 3, frequency = 95f)
                         audioSnippetDao.insertSnippet(
                             AudioSnippetEntity(
                                 sessionId = sessionId,
                                 timestampMs = sleepOnsetMs + (Random.nextLong(60, 240) * 60_000L),
-                                durationSeconds = 10,
-                                filePath = "",
+                                durationSeconds = 3,
+                                filePath = snoreFile.absolutePath,
                                 peakAmplitude = 0.6f,
                                 type = "SNORE"
                             )
                         )
                     }
                     if (Random.nextFloat() > 0.4f) {
+                        val talkFile = java.io.File(snippetsDir, "test_noise_${sessionId}.wav")
+                        createSyntheticWavFile(talkFile, durationSeconds = 3, frequency = 220f)
                         audioSnippetDao.insertSnippet(
                             AudioSnippetEntity(
                                 sessionId = sessionId,
                                 timestampMs = sleepOnsetMs + (Random.nextLong(120, 300) * 60_000L),
-                                durationSeconds = 7,
-                                filePath = "",
+                                durationSeconds = 3,
+                                filePath = talkFile.absolutePath,
                                 peakAmplitude = 0.45f,
                                 type = if (Random.nextBoolean()) "SLEEP_TALK" else "COUGH_SNEEZE"
                             )
@@ -308,10 +329,64 @@ class AdminViewModel @Inject constructor(
                     }
                 }
 
-                _messageEvent.emit("14 ночей тестового сна успешно созданы!")
+                _messageEvent.emit("14 ночей и аудиозаписи сна успешно созданы!")
             } catch (e: Exception) {
                 _messageEvent.emit("Ошибка генерации: ${e.message}")
             }
+        }
+    }
+
+    private fun createSyntheticWavFile(file: java.io.File, durationSeconds: Int, frequency: Float) {
+        if (file.exists()) return
+        val sampleRate = 16000
+        val numSamples = durationSeconds * sampleRate
+        val pcm = ShortArray(numSamples)
+        for (i in 0 until numSamples) {
+            val t = i.toDouble() / sampleRate
+            val envelope = Math.sin(Math.PI * t / durationSeconds)
+            pcm[i] = (Math.sin(2.0 * Math.PI * frequency * t) * envelope * 12000.0).toInt().toShort()
+        }
+
+        val totalDataLen = numSamples * 2
+        val totalAudioLen = totalDataLen + 36
+        val header = ByteArray(44)
+        // RIFF/WAVE header
+        header[0] = 'R'.code.toByte(); header[1] = 'I'.code.toByte(); header[2] = 'F'.code.toByte(); header[3] = 'F'.code.toByte()
+        header[4] = (totalAudioLen and 0xff).toByte()
+        header[5] = ((totalAudioLen shr 8) and 0xff).toByte()
+        header[6] = ((totalAudioLen shr 16) and 0xff).toByte()
+        header[7] = ((totalAudioLen shr 24) and 0xff).toByte()
+        header[8] = 'W'.code.toByte(); header[9] = 'A'.code.toByte(); header[10] = 'V'.code.toByte(); header[11] = 'E'.code.toByte()
+        header[12] = 'f'.code.toByte(); header[13] = 'm'.code.toByte(); header[14] = 't'.code.toByte(); header[15] = ' '.code.toByte()
+        header[16] = 16; header[17] = 0; header[18] = 0; header[19] = 0 // format chunk length 16
+        header[20] = 1; header[21] = 0 // PCM = 1
+        header[22] = 1; header[23] = 0 // Mono = 1
+        header[24] = (sampleRate and 0xff).toByte()
+        header[25] = ((sampleRate shr 8) and 0xff).toByte()
+        header[26] = ((sampleRate shr 16) and 0xff).toByte()
+        header[27] = ((sampleRate shr 24) and 0xff).toByte()
+        val byteRate = sampleRate * 2
+        header[28] = (byteRate and 0xff).toByte()
+        header[29] = ((byteRate shr 8) and 0xff).toByte()
+        header[30] = ((byteRate shr 16) and 0xff).toByte()
+        header[31] = ((byteRate shr 24) and 0xff).toByte()
+        header[32] = 2; header[33] = 0 // block align
+        header[34] = 16; header[35] = 0 // bits per sample
+        header[36] = 'd'.code.toByte(); header[37] = 'a'.code.toByte(); header[38] = 't'.code.toByte(); header[39] = 'a'.code.toByte()
+        header[40] = (totalDataLen and 0xff).toByte()
+        header[41] = ((totalDataLen shr 8) and 0xff).toByte()
+        header[42] = ((totalDataLen shr 16) and 0xff).toByte()
+        header[43] = ((totalDataLen shr 24) and 0xff).toByte()
+
+        file.outputStream().use { fos ->
+            fos.write(header)
+            val byteBuf = ByteArray(totalDataLen)
+            for (i in 0 until numSamples) {
+                val s = pcm[i].toInt()
+                byteBuf[i * 2] = (s and 0xFF).toByte()
+                byteBuf[i * 2 + 1] = ((s shr 8) and 0xFF).toByte()
+            }
+            fos.write(byteBuf)
         }
     }
 

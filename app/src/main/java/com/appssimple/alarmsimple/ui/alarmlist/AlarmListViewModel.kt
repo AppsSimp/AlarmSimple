@@ -24,6 +24,7 @@ class AlarmListViewModel @Inject constructor(
 
     val alarms: Flow<List<AlarmEntity>> = alarmDao.getAllAlarms()
     val coachMarksShown: Flow<Boolean> = userPreferences.coachMarksShown
+    val testRingButtonsEnabled: Flow<Boolean> = userPreferences.testRingButtonsEnabled
 
     fun dismissCoachMarks() {
         viewModelScope.launch {
