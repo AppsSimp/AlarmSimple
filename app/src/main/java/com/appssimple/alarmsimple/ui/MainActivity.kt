@@ -27,6 +27,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,12 +54,40 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var userPreferences: UserPreferences
 
+    override fun onResume() {
+        super.onResume()
+        checkAndRedirectIfRinging()
+    }
+
+    private fun checkAndRedirectIfRinging() {
+        if (com.appssimple.alarmsimple.service.AlarmFiringService.isRinging.value) {
+            val alarmId = com.appssimple.alarmsimple.service.AlarmFiringService.ringingAlarmId.value
+            val ringIntent = android.content.Intent(this, com.appssimple.alarmsimple.ui.alarm.AlarmRingingActivity::class.java).apply {
+                flags = android.content.Intent.FLAG_ACTIVITY_NEW_TASK or
+                        android.content.Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                        android.content.Intent.FLAG_ACTIVITY_SINGLE_TOP
+                if (alarmId > 0) {
+                    putExtra(com.appssimple.alarmsimple.service.AlarmFiringService.EXTRA_ALARM_ID, alarmId)
+                }
+            }
+            startActivity(ringIntent)
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        checkAndRedirectIfRinging()
         enableEdgeToEdge()
 
         setContent {
             AlarmSimpleTheme {
+                val isRinging by com.appssimple.alarmsimple.service.AlarmFiringService.isRinging.collectAsState()
+                LaunchedEffect(isRinging) {
+                    if (isRinging) {
+                        checkAndRedirectIfRinging()
+                    }
+                }
+
                 var ready by remember { mutableStateOf(false) }
                 var onboardingCompleted by remember { mutableStateOf(false) }
 

@@ -145,6 +145,12 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                     }
                 }
 
+                androidx.activity.compose.BackHandler(
+                    enabled = questTypeState.value != QuestType.NONE || isSirenState.value
+                ) {
+                    // Block back navigation / gesture when quest or siren is active
+                }
+
                 LaunchedEffect(questSuccessTrigger.value) {
                     if (questSuccessTrigger.value) {
                         dismissAndFinish()
