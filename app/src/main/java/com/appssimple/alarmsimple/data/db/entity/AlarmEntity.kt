@@ -46,6 +46,9 @@ data class AlarmEntity(
     
     /** JSON array of repeat days: ["MON","TUE",...] or empty for one-time */
     val repeatDays: String = "[]",
+
+    /** Interval in weeks: 1 = every week, 2 = every 2 weeks, 3 = every 3 weeks */
+    val repeatIntervalWeeks: Int = 1,
     
     /** User-facing label for the alarm */
     val label: String = "",

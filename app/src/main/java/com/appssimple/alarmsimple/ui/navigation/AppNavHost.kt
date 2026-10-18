@@ -30,8 +30,10 @@ fun AppNavHost(
         composable<Screen.Onboarding> {
             OnboardingScreen(
                 onFinished = {
-                    navController.navigate(Screen.AlarmList) {
-                        popUpTo(Screen.Onboarding) { inclusive = true }
+                    if (!navController.popBackStack()) {
+                        navController.navigate(Screen.AlarmList) {
+                            popUpTo(Screen.Onboarding) { inclusive = true }
+                        }
                     }
                 }
             )
@@ -42,7 +44,9 @@ fun AppNavHost(
                 onAddAlarm = { navController.navigate(Screen.AlarmSetup()) },
                 onEditAlarm = { id -> navController.navigate(Screen.AlarmSetup(alarmId = id)) },
                 onOpenSettings = { navController.navigate(Screen.Settings) },
-                onOpenHistory = { navController.navigate(Screen.SleepHistory) }
+                onOpenHistory = { navController.navigate(Screen.SleepHistory) },
+                onOpenSleepTracking = { navController.navigate(Screen.SleepTracking) },
+                onOpenHelp = { navController.navigate(Screen.Onboarding) }
             )
         }
         
@@ -71,6 +75,12 @@ fun AppNavHost(
         composable<Screen.SleepHistory> {
             SleepHistoryScreen(
                 onOpenSession = { id -> navController.navigate(Screen.SleepStats(sessionId = id)) },
+                onNavigateBack = { navController.popBackStack() }
+            )
+        }
+
+        composable<Screen.SleepTracking> {
+            com.appssimple.alarmsimple.ui.tracking.SleepTrackingScreen(
                 onNavigateBack = { navController.popBackStack() }
             )
         }

@@ -15,7 +15,7 @@ import androidx.room.PrimaryKey
             entity = AlarmEntity::class,
             parentColumns = ["id"],
             childColumns = ["alarmId"],
-            onDelete = ForeignKey.CASCADE
+            onDelete = ForeignKey.SET_NULL
         )
     ],
     indices = [Index("alarmId")]
@@ -24,8 +24,8 @@ data class SleepSessionEntity(
     @PrimaryKey(autoGenerate = true)
     val id: Long = 0,
     
-    /** The alarm that initiated this tracking session */
-    val alarmId: Long,
+    /** The alarm that initiated this tracking session. Null for manual sleep tracking. */
+    val alarmId: Long? = null,
     
     /** When tracking started (user pressed "Start") */
     val trackingStartMs: Long,

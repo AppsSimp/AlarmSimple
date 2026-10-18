@@ -1,0 +1,643 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>AlarmSimple - Cinematic App Promo Video</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;700;800&family=JetBrains+Mono:wght@700&display=swap" rel="stylesheet">
+  <style>
+    body {
+      font-family: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
+    }
+    .font-mono-time {
+      font-family: 'JetBrains Mono', monospace;
+    }
+    /* 3D Stage & Lighting */
+    .stage-container {
+      perspective: 1600px;
+      perspective-origin: 50% 50%;
+    }
+    .phone-chassis {
+      transform-style: preserve-3d;
+      transition: transform 0.8s cubic-bezier(0.2, 0.8, 0.2, 1);
+      box-shadow: 
+        0 40px 100px -20px rgba(0, 0, 0, 0.95),
+        0 0 80px rgba(99, 102, 241, 0.35),
+        inset 0 0 4px rgba(255, 255, 255, 0.3);
+    }
+    .glass-reflection {
+      background: linear-gradient(135deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0) 45%, rgba(255, 255, 255, 0.05) 100%);
+      pointer-events: none;
+    }
+    @keyframes pulseRing {
+      0% { transform: scale(0.85); opacity: 0.9; }
+      100% { transform: scale(2.2); opacity: 0; }
+    }
+    .pulse-ring-anim {
+      animation: pulseRing 2s cubic-bezier(0.2, 0.8, 0.2, 1) infinite;
+    }
+    @keyframes screenGlow {
+      0%, 100% { opacity: 0.5; filter: blur(60px); }
+      50% { opacity: 0.85; filter: blur(80px); }
+    }
+    .ambient-glow {
+      animation: screenGlow 4s ease-in-out infinite;
+    }
+  </style>
+</head>
+<body class="bg-[#050814] text-slate-100 min-h-screen flex flex-col items-center justify-between overflow-x-hidden selection:bg-indigo-500 selection:text-white">
+
+  <!-- Deep Stage Lighting & Star Dust Canvas -->
+  <canvas id="ambientCanvas" class="fixed inset-0 pointer-events-none z-0"></canvas>
+
+  <!-- Dynamic Ambient Color Glow -->
+  <div id="dynamicGlow" class="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[650px] h-[650px] rounded-full bg-indigo-600/25 ambient-glow pointer-events-none z-0 transition-colors duration-1000"></div>
+
+  <!-- Top Studio Header -->
+  <header class="relative z-20 w-full max-w-6xl px-6 py-4 flex items-center justify-between border-b border-slate-800/60 backdrop-blur-xl bg-[#050814]/70">
+    <div class="flex items-center space-x-3.5">
+      <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-500 via-purple-600 to-pink-500 flex items-center justify-center shadow-lg shadow-indigo-500/40">
+        <svg class="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+      </div>
+      <div>
+        <div class="flex items-center space-x-2">
+          <span class="text-lg font-black tracking-wider text-white">AlarmSimple</span>
+          <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">CINEMATIC PROMO</span>
+        </div>
+        <p class="text-xs text-slate-400">Реальный Jetpack Compose UI • Звук • 3D Мокап</p>
+      </div>
+    </div>
+
+    <!-- Video Recording & Cinematic Controls -->
+    <div class="flex items-center space-x-3">
+      <button id="btnSoundToggle" onclick="toggleAudio()" class="px-3.5 py-2 rounded-xl bg-slate-900 border border-slate-700 hover:border-indigo-500 text-xs font-semibold text-slate-300 flex items-center space-x-2 transition cursor-pointer">
+        <span id="soundIcon">🔊</span>
+        <span id="soundLabel">Звук: Вкл</span>
+      </button>
+
+      <button id="btnPlayPromo" onclick="startCinematicVideoTour()" class="px-5 py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 hover:from-indigo-600 hover:to-purple-700 text-white text-xs font-bold flex items-center space-x-2 shadow-lg shadow-indigo-500/30 transition cursor-pointer">
+        <span id="playIcon">▶</span>
+        <span id="playLabel">Запустить промо-шоу</span>
+      </button>
+
+      <button id="btnCaptureScreen" onclick="captureAndDownloadVideo()" class="px-4 py-2.5 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-600 hover:to-red-700 text-white text-xs font-bold flex items-center space-x-2 shadow-lg shadow-rose-500/30 transition cursor-pointer">
+        <span class="w-2 h-2 rounded-full bg-white animate-ping"></span>
+        <span id="recordLabel">Скачать видео</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Stage Layout -->
+  <main class="relative z-10 w-full max-w-6xl px-6 py-6 flex-1 flex flex-col lg:flex-row items-center justify-between gap-10">
+    
+    <!-- Left Text & Key Benefits (Cinematic narration) -->
+    <div class="flex-1 max-w-xl text-left space-y-6">
+      
+      <!-- Current Scene Badge -->
+      <div class="inline-flex items-center space-x-2 px-3.5 py-1.5 rounded-full bg-slate-900/90 border border-indigo-500/40 text-indigo-300 text-xs font-bold shadow-lg">
+        <span class="w-2 h-2 rounded-full bg-indigo-400 animate-ping"></span>
+        <span id="sceneStepBadge">ФИЧА 1 ИЗ 4 • РЕЖИМ «БАИНЬКИ»</span>
+      </div>
+
+      <!-- Main Headline -->
+      <h1 id="sceneHeadline" class="text-4xl lg:text-5xl font-extrabold tracking-tight leading-[1.15] text-white">
+        Умный сон без необходимости ставить звонок
+      </h1>
+
+      <!-- Subtitle Description -->
+      <p id="sceneDescription" class="text-slate-300 text-base lg:text-lg leading-relaxed">
+        Нажмите карточку «Баиньки» прямо перед сном. Алгоритм в реальном времени анализирует микро-движения и дыхание, определяя лёгкую и глубокую фазы.
+      </p>
+
+      <!-- Interactive Scene Selector Buttons -->
+      <div class="flex flex-wrap gap-2.5 pt-2">
+        <button onclick="switchScene(0)" class="scene-tab-btn px-4 py-2 rounded-xl text-xs font-bold transition border border-indigo-500 bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 cursor-pointer">
+          🌙 1. Баиньки
+        </button>
+        <button onclick="switchScene(1)" class="scene-tab-btn px-4 py-2 rounded-xl text-xs font-bold transition border border-slate-800 bg-slate-900/80 text-slate-400 hover:text-white cursor-pointer">
+          💳 2. NFC Карта МИР
+        </button>
+        <button onclick="switchScene(2)" class="scene-tab-btn px-4 py-2 rounded-xl text-xs font-bold transition border border-slate-800 bg-slate-900/80 text-slate-400 hover:text-white cursor-pointer">
+          🔒 3. Замок громкости
+        </button>
+        <button onclick="switchScene(3)" class="scene-tab-btn px-4 py-2 rounded-xl text-xs font-bold transition border border-slate-800 bg-slate-900/80 text-slate-400 hover:text-white cursor-pointer">
+          ⏱ 4. Окно 30 мин
+        </button>
+      </div>
+
+      <!-- Live Feature Indicator Pills -->
+      <div class="grid grid-cols-2 gap-3.5 pt-2">
+        <div class="p-3.5 rounded-2xl bg-[#11172b]/80 border border-slate-800 flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-lg">💡</div>
+          <div>
+            <div class="text-xs font-bold text-white">Подсказки за ручку</div>
+            <div class="text-[11px] text-slate-400">Обучение прямо в UI</div>
+          </div>
+        </div>
+        <div class="p-3.5 rounded-2xl bg-[#11172b]/80 border border-slate-800 flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-xl bg-emerald-500/20 text-emerald-400 flex items-center justify-center text-lg">🔋</div>
+          <div>
+            <div class="text-xs font-bold text-white">0% траты батареи</div>
+            <div class="text-[11px] text-slate-400">Локальный анализ сна</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Right 3D Stage with Precise Jetpack Compose Android UI -->
+    <div class="stage-container relative flex items-center justify-center p-4">
+      
+      <!-- Phone Outer Chassis -->
+      <div id="phoneDevice" class="phone-chassis relative w-[340px] h-[700px] rounded-[52px] bg-[#1e2438] p-[10px] border-2 border-slate-600/40">
+        
+        <!-- Hardware buttons -->
+        <div class="absolute -left-[5px] top-28 w-[4px] h-11 bg-slate-600 rounded-l"></div>
+        <div class="absolute -left-[5px] top-44 w-[4px] h-11 bg-slate-600 rounded-l"></div>
+        <div class="absolute -right-[5px] top-32 w-[4px] h-16 bg-slate-600 rounded-r"></div>
+
+        <!-- Phone Screen Display (Jetpack Compose background: #090D1A) -->
+        <div class="relative w-full h-full rounded-[42px] bg-[#090D1A] overflow-hidden flex flex-col border border-slate-800/90 shadow-inner">
+          
+          <!-- Glossy reflection overlay -->
+          <div class="glass-reflection absolute inset-0 z-30"></div>
+
+          <!-- Dynamic Island / Top Camera -->
+          <div class="absolute top-2.5 left-1/2 -translate-x-1/2 w-28 h-6 bg-black rounded-full z-40 flex items-center justify-between px-3">
+            <div class="w-2.5 h-2.5 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center">
+              <div class="w-1 h-1 rounded-full bg-indigo-500"></div>
+            </div>
+            <div id="micIndicator" class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></div>
+          </div>
+
+          <!-- Android Status Bar -->
+          <div class="pt-3.5 px-6 pb-2 flex justify-between items-center text-[11px] font-semibold text-slate-300 z-20">
+            <span id="phoneClock">07:28</span>
+            <div class="flex items-center space-x-1.5">
+              <span class="text-[10px]">VoLTE</span>
+              <div class="w-4 h-2.5 border border-slate-300 rounded-xs p-[1px] flex items-center">
+                <div class="w-full h-full bg-white rounded-2xs"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ================= APP CONTENT CONTAINER ================= -->
+          <div id="screenContainer" class="relative flex-1 p-4 flex flex-col justify-between text-white overflow-hidden z-10">
+
+            <!-- SCREEN 1: Real AlarmListScreen with QuickSleepCard & Coach Mark -->
+            <div id="viewScreen1" class="space-y-3.5 transition-all duration-500">
+              
+              <!-- Top AppBar -->
+              <div class="flex items-center justify-between pt-1">
+                <div class="flex items-center space-x-2">
+                  <div class="w-8 h-8 rounded-full bg-gradient-to-r from-indigo-500 to-purple-600 flex items-center justify-center shadow-md">
+                    <span class="text-xs">⏰</span>
+                  </div>
+                  <span class="font-extrabold text-base tracking-wide text-white">AlarmSimple</span>
+                </div>
+                <div class="flex items-center space-x-2 text-slate-400">
+                  <div class="w-7 h-7 rounded-full bg-slate-800/90 flex items-center justify-center text-xs">❓</div>
+                  <div class="w-7 h-7 rounded-full bg-slate-800/90 flex items-center justify-center text-xs">🕒</div>
+                  <div class="w-7 h-7 rounded-full bg-slate-800/90 flex items-center justify-center text-xs">⚙️</div>
+                </div>
+              </div>
+
+              <!-- QuickSleepCard («Баиньки») — EXACT COLOR & GRADIENT MATCH -->
+              <div class="p-4 rounded-[20px] bg-gradient-to-r from-[#1E1B4B] to-[#0F172A] border border-indigo-500/50 shadow-xl shadow-indigo-950/50 space-y-2 relative overflow-hidden">
+                <div class="flex justify-between items-start">
+                  <div>
+                    <div class="flex items-center space-x-2">
+                      <span class="text-sm">🌙</span>
+                      <span class="font-bold text-sm text-white">Идёте спать прямо сейчас?</span>
+                    </div>
+                    <p class="text-[11px] text-white/80 mt-1">
+                      Нажмите «Баиньки», чтобы начать трекинг фаз сна прямо сейчас
+                    </p>
+                  </div>
+                </div>
+                <div class="pt-1 flex items-center justify-between">
+                  <span class="text-[11px] text-indigo-300 font-medium">Без звонка будильника</span>
+                  <button class="px-4 py-2 rounded-xl bg-white text-slate-900 font-bold text-xs shadow-lg flex items-center space-x-1.5 hover:bg-slate-100">
+                    <span>💤</span>
+                    <span>Баиньки</span>
+                  </button>
+                </div>
+              </div>
+
+              <!-- Real Alarm Item Card (ModernCard from AlarmItemCard.kt) -->
+              <div class="p-4 rounded-[20px] bg-[#11172B] border border-slate-800/90 space-y-2.5 shadow-lg">
+                <div class="flex justify-between items-center">
+                  <div>
+                    <div class="text-[11px] font-bold text-indigo-400">Будни (Работа)</div>
+                    <div class="text-3xl font-black tracking-tight text-white font-mono-time">07:30</div>
+                  </div>
+                  <!-- Active Switch with Indigo Glow -->
+                  <div class="w-12 h-6 bg-indigo-600 rounded-full p-0.5 flex justify-end shadow-md shadow-indigo-500/50">
+                    <div class="w-5 h-5 bg-white rounded-full shadow"></div>
+                  </div>
+                </div>
+
+                <div class="flex items-center space-x-2 text-[10px]">
+                  <span class="px-2 py-0.5 rounded-md bg-indigo-950/80 text-indigo-300 border border-indigo-700/40">Окно 30 мин</span>
+                  <span class="text-slate-400">Пн, Вт, Ср, Чт, Пт</span>
+                </div>
+
+                <div class="pt-2 border-t border-slate-800/80 flex items-center justify-between text-[11px]">
+                  <span class="text-pink-400 font-semibold flex items-center space-x-1">
+                    <span>💳</span> <span>NFC: Карта МИР</span>
+                  </span>
+                  <span class="text-emerald-400 font-semibold">Сирена вкл</span>
+                </div>
+              </div>
+
+              <!-- CoachMarksOverlay Card (Шаг 1 из 3) -->
+              <div class="p-3.5 rounded-2xl bg-[#19223D] border border-indigo-400/50 shadow-2xl space-y-2">
+                <div class="flex justify-between items-center">
+                  <span class="text-xs font-bold text-white flex items-center space-x-1">
+                    <span>💡</span> <span>Режим «Баиньки»</span>
+                  </span>
+                  <span class="text-[10px] font-bold text-indigo-300 bg-indigo-950 px-2 py-0.5 rounded-md border border-indigo-800">1 из 3</span>
+                </div>
+                <p class="text-[11px] text-slate-300 leading-snug">
+                  Хотите отслеживать сон без звукового будильника? Нажмите эту карточку прямо перед сном!
+                </p>
+                <div class="flex justify-end pt-1">
+                  <span class="text-[11px] text-white bg-indigo-600 px-3 py-1 rounded-lg font-bold">Далее →</span>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- SCREEN 2: Alarm Ringing & NFC Bank Card Scan Screen -->
+            <div id="viewScreen2" class="hidden space-y-5 pt-3 text-center transition-all duration-500">
+              <div class="space-y-1">
+                <span class="text-[11px] font-bold text-rose-400 tracking-wider uppercase px-2.5 py-1 rounded-full bg-rose-950/80 border border-rose-800/50">
+                  Будильник звонит!
+                </span>
+                <div class="text-5xl font-black text-white font-mono-time pt-2">07:18</div>
+                <p class="text-xs text-indigo-300 font-medium">Лёгкая фаза сна • Мягкое пробуждение</p>
+              </div>
+
+              <!-- Pulsing NFC Radar & Bank Card -->
+              <div class="relative w-44 h-44 mx-auto flex items-center justify-center my-3">
+                <div class="absolute inset-0 rounded-full bg-pink-500/20 border border-pink-500/40 pulse-ring-anim"></div>
+                <div class="absolute w-32 h-32 rounded-full bg-indigo-500/25 border border-indigo-400/50 pulse-ring-anim" style="animation-delay: 0.6s"></div>
+                
+                <!-- Credit Card Visual -->
+                <div class="relative w-36 h-24 rounded-xl bg-gradient-to-tr from-rose-600 via-pink-600 to-indigo-600 p-2.5 flex flex-col justify-between text-left shadow-2xl border border-white/30 z-10">
+                  <div class="flex justify-between items-center text-[9px] text-white/90 font-bold">
+                    <span>КАРТА МИР</span>
+                    <span>NFC</span>
+                  </div>
+                  <div class="text-xs font-mono font-bold text-white tracking-widest">•••• 8842</div>
+                  <div class="text-[8px] text-pink-200 uppercase font-semibold">Кухня / Ванная</div>
+                </div>
+              </div>
+
+              <div class="p-3.5 rounded-2xl bg-[#11172B] border border-slate-800 text-left space-y-1">
+                <div class="text-xs font-bold text-white flex items-center space-x-1.5">
+                  <span class="text-rose-400">🔒</span>
+                  <span>Громкость заблокирована</span>
+                </div>
+                <p class="text-[11px] text-slate-400">
+                  Приложите привязанную карту, чтобы остановить звук. Кнопки смартфона отключены.
+                </p>
+              </div>
+            </div>
+
+            <!-- SCREEN 3: Alarm Setup Screen with Smart Window -->
+            <div id="viewScreen3" class="hidden space-y-3.5 pt-1 transition-all duration-500">
+              <div class="flex items-center space-x-2 border-b border-slate-800/80 pb-2">
+                <span class="text-sm text-slate-400">←</span>
+                <span class="text-xs font-bold text-white">Настройка умного будильника</span>
+              </div>
+
+              <div class="p-3.5 rounded-2xl bg-[#11172B] border border-slate-800 flex justify-between items-center">
+                <span class="text-xs text-slate-300 font-medium">Время пробуждения</span>
+                <span class="text-2xl font-black text-indigo-400 font-mono-time">07:00</span>
+              </div>
+
+              <!-- Wake Window -->
+              <div class="p-3.5 rounded-2xl bg-[#11172B] border border-slate-800 space-y-2">
+                <div class="flex justify-between items-center text-xs">
+                  <span class="font-bold text-white">Умное окно пробуждения</span>
+                  <span class="text-indigo-400 font-bold">30 минут</span>
+                </div>
+                <div class="grid grid-cols-4 gap-2 text-center text-xs font-bold">
+                  <div class="py-2 bg-slate-900 rounded-xl text-slate-400 border border-slate-800">15м</div>
+                  <div class="py-2 bg-indigo-600 rounded-xl text-white shadow-md shadow-indigo-600/40">30м</div>
+                  <div class="py-2 bg-slate-900 rounded-xl text-slate-400 border border-slate-800">45м</div>
+                  <div class="py-2 bg-slate-900 rounded-xl text-slate-400 border border-slate-800">60м</div>
+                </div>
+              </div>
+
+              <!-- Quest Options -->
+              <div class="p-3.5 rounded-2xl bg-[#11172B] border border-slate-800 space-y-2">
+                <span class="text-xs font-bold text-white">Квест на выключение</span>
+                <div class="grid grid-cols-3 gap-2 text-center text-[10px] font-bold">
+                  <div class="p-2 rounded-xl bg-indigo-600 text-white shadow">💳 NFC карта</div>
+                  <div class="p-2 rounded-xl bg-slate-900 text-slate-300 border border-slate-800">📷 Штрихкод</div>
+                  <div class="p-2 rounded-xl bg-slate-900 text-slate-300 border border-slate-800">➗ Задачи</div>
+                </div>
+              </div>
+
+              <div class="p-3 rounded-xl bg-emerald-950/60 border border-emerald-800/50 text-[11px] text-emerald-300 flex items-center space-x-2">
+                <span>🛡</span>
+                <span>Защита от просыпания активирована</span>
+              </div>
+            </div>
+
+            <!-- SCREEN 4: Sleep Stats Screen with Real Hypnogram Curve -->
+            <div id="viewScreen4" class="hidden space-y-3.5 pt-1 transition-all duration-500">
+              <div class="flex justify-between items-center">
+                <span class="text-xs font-bold text-white">Аналитика сна • Ночь 18 Окт</span>
+                <span class="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">94% ЭФФЕКТ</span>
+              </div>
+
+              <!-- Hypnogram Visual Chart -->
+              <div class="h-32 w-full bg-[#11172B] rounded-2xl border border-slate-800 p-3 flex flex-col justify-between">
+                <div class="flex justify-between text-[10px] text-slate-400 font-mono-time">
+                  <span>23:30 (Сон)</span>
+                  <span>03:15 (Глубокий)</span>
+                  <span>07:18 (Подъём)</span>
+                </div>
+                <svg class="w-full h-18" viewBox="0 0 240 65" fill="none">
+                  <path d="M0,25 Q30,5 60,35 T120,55 T180,18 T240,10 L240,65 L0,65 Z" fill="url(#statsGrad)" opacity="0.35"/>
+                  <path d="M0,25 Q30,5 60,35 T120,55 T180,18 T240,10" stroke="#818CF8" stroke-width="3" stroke-linecap="round"/>
+                  <defs>
+                    <linearGradient id="statsGrad" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stop-color="#818CF8"/>
+                      <stop offset="100%" stop-color="transparent"/>
+                    </linearGradient>
+                  </defs>
+                </svg>
+              </div>
+
+              <div class="grid grid-cols-2 gap-2.5 text-[11px]">
+                <div class="p-3 rounded-xl bg-[#11172B] border border-slate-800">
+                  <div class="text-slate-400">Общее время сна</div>
+                  <div class="text-base font-black text-white font-mono-time mt-0.5">7ч 48м</div>
+                </div>
+                <div class="p-3 rounded-xl bg-[#11172B] border border-slate-800">
+                  <div class="text-slate-400">Пробуждения</div>
+                  <div class="text-base font-black text-emerald-400 font-mono-time mt-0.5">0 раз</div>
+                </div>
+              </div>
+
+              <button class="w-full py-2.5 rounded-xl bg-gradient-to-r from-indigo-500 to-purple-600 text-white font-bold text-xs shadow-lg shadow-indigo-600/30">
+                Поделиться бодростью ✨
+              </button>
+            </div>
+
+            <!-- Bottom Android Navigation Pill -->
+            <div class="pt-2 flex justify-center">
+              <div class="w-28 h-1 bg-slate-700/80 rounded-full"></div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <!-- Audio Synthesis & Dynamic Tour Engine -->
+  <script>
+    // 1. Web Audio API for Futuristic Sound Effects (Clicks, Whooshes, Alarms)
+    let audioCtx = null;
+    let isSoundOn = true;
+
+    function initAudio() {
+      if (!audioCtx) {
+        audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      }
+    }
+
+    function toggleAudio() {
+      isSoundOn = !isSoundOn;
+      document.getElementById('soundIcon').innerText = isSoundOn ? '🔊' : '🔇';
+      document.getElementById('soundLabel').innerText = isSoundOn ? 'Звук: Вкл' : 'Звук: Выкл';
+    }
+
+    function playTone(freq, type = 'sine', duration = 0.15, vol = 0.2) {
+      if (!isSoundOn) return;
+      initAudio();
+      try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+        gain.gain.setValueAtTime(vol, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + duration);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + duration);
+      } catch(e) {}
+    }
+
+    function playWhooshSound() {
+      if (!isSoundOn) return;
+      initAudio();
+      try {
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(180, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(560, audioCtx.currentTime + 0.3);
+        gain.gain.setValueAtTime(0.18, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.35);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.35);
+      } catch(e) {}
+    }
+
+    function playAlarmBeep() {
+      if (!isSoundOn) return;
+      playTone(880, 'sine', 0.12, 0.25);
+      setTimeout(() => playTone(1200, 'sine', 0.18, 0.3), 130);
+    }
+
+    // 2. Space Particles Canvas
+    const canvas = document.getElementById('ambientCanvas');
+    const ctx = canvas.getContext('2d');
+    let width = canvas.width = window.innerWidth;
+    let height = canvas.height = window.innerHeight;
+
+    window.addEventListener('resize', () => {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+    });
+
+    const particles = Array.from({ length: 50 }, () => ({
+      x: Math.random() * width,
+      y: Math.random() * height,
+      r: Math.random() * 2 + 0.8,
+      dx: (Math.random() - 0.5) * 0.4,
+      dy: (Math.random() - 0.5) * 0.4,
+      alpha: Math.random() * 0.7 + 0.2
+    }));
+
+    function renderParticles() {
+      ctx.clearRect(0, 0, width, height);
+      particles.forEach(p => {
+        p.x += p.dx;
+        p.y += p.dy;
+        if (p.x < 0) p.x = width;
+        if (p.x > width) p.x = 0;
+        if (p.y < 0) p.y = height;
+        if (p.y > height) p.y = 0;
+
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(165, 180, 252, ${p.alpha})`;
+        ctx.fill();
+      });
+      requestAnimationFrame(renderParticles);
+    }
+    renderParticles();
+
+    // 3. Scene Data & Camera Angles for 3D Studio Effect
+    const scenes = [
+      {
+        badge: "ФИЧА 1 ИЗ 4 • РЕЖИМ «БАИНЬКИ»",
+        headline: "Умный сон без необходимости ставить звонок",
+        desc: "Нажмите карточку «Баиньки» прямо перед сном. Алгоритм в реальном времени анализирует микро-движения и дыхание, определяя лёгкую и глубокую фазы.",
+        phoneTransform: "rotateY(-6deg) rotateX(4deg) translateY(0px)",
+        glowColor: "rgba(99, 102, 241, 0.3)"
+      },
+      {
+        badge: "ФИЧА 2 ИЗ 4 • НЕОТКЛЮЧАЕМЫЙ NFC КВЕСТ",
+        headline: "Привяжите даже банковскую карту МИР",
+        desc: "Чтобы будильник перестал звонить, нужно физически встать с кровати и приложить привязанную карту или метку в ванной. Проспать просто невозможно!",
+        phoneTransform: "rotateY(8deg) rotateX(-3deg) translateY(-8px)",
+        glowColor: "rgba(244, 63, 94, 0.35)"
+      },
+      {
+        badge: "ФИЧА 3 ИЗ 4 • УМНОЕ ОКНО ПРОБУЖДЕНИЯ",
+        headline: "Подъём строго в лёгкой фазе сна",
+        desc: "Задайте окно от 15 до 60 минут. Будильник сам определит момент, когда ваше тело уже готово проснуться бодрым и полным сил.",
+        phoneTransform: "rotateY(-4deg) rotateX(2deg) translateY(5px)",
+        glowColor: "rgba(168, 85, 247, 0.3)"
+      },
+      {
+        badge: "ФИЧА 4 ИЗ 4 • ДЕТАЛЬНАЯ АНАЛИТИКА",
+        headline: "Честная гипнограмма каждой ночи",
+        desc: "Никаких платных подписок. Вся статистика, фазы сна, уровень шума и график хранятся только на вашем телефоне с максимальной приватностью.",
+        phoneTransform: "rotateY(4deg) rotateX(-4deg) translateY(0px)",
+        glowColor: "rgba(16, 185, 129, 0.3)"
+      }
+    ];
+
+    let currentScene = 0;
+    function switchScene(index) {
+      currentScene = index;
+      const s = scenes[index];
+
+      // Sound
+      if (index === 1) playAlarmBeep();
+      else playWhooshSound();
+
+      // Text update
+      document.getElementById('sceneStepBadge').innerText = s.badge;
+      document.getElementById('sceneHeadline').innerText = s.headline;
+      document.getElementById('sceneDescription').innerText = s.desc;
+
+      // 3D Chassis Tilt
+      const phone = document.getElementById('phoneDevice');
+      phone.style.transform = s.phoneTransform;
+
+      // Dynamic Ambient Glow
+      document.getElementById('dynamicGlow').style.backgroundColor = s.glowColor;
+
+      // Switch Screens in UI
+      for (let i = 1; i <= 4; i++) {
+        const view = document.getElementById(`viewScreen${i}`);
+        if (i === index + 1) {
+          view.classList.remove('hidden');
+        } else {
+          view.classList.add('hidden');
+        }
+      }
+
+      // Update Tab Buttons
+      document.querySelectorAll('.scene-tab-btn').forEach((btn, idx) => {
+        if (idx === index) {
+          btn.className = "scene-tab-btn px-4 py-2 rounded-xl text-xs font-bold transition border border-indigo-500 bg-indigo-600 text-white shadow-lg shadow-indigo-600/30 cursor-pointer";
+        } else {
+          btn.className = "scene-tab-btn px-4 py-2 rounded-xl text-xs font-bold transition border border-slate-800 bg-slate-900/80 text-slate-400 hover:text-white cursor-pointer";
+        }
+      });
+    }
+
+    // 4. Automated Cinematic Video Tour
+    let tourInterval = null;
+    function startCinematicVideoTour() {
+      initAudio();
+      if (tourInterval) {
+        clearInterval(tourInterval);
+        tourInterval = null;
+        document.getElementById('playLabel').innerText = "Запустить промо-шоу";
+        document.getElementById('playIcon').innerText = "▶";
+      } else {
+        document.getElementById('playLabel').innerText = "Пауза промо";
+        document.getElementById('playIcon').innerText = "⏸";
+        switchScene((currentScene + 1) % scenes.length);
+        tourInterval = setInterval(() => {
+          switchScene((currentScene + 1) % scenes.length);
+        }, 4200);
+      }
+    }
+
+    // 5. High-Resolution Screen Recording to MP4/WebM
+    let mediaRecorder = null;
+    let recordedChunks = [];
+    async function captureAndDownloadVideo() {
+      initAudio();
+      const label = document.getElementById('recordLabel');
+
+      if (mediaRecorder && mediaRecorder.state === "recording") {
+        mediaRecorder.stop();
+        label.innerText = "Скачать видео";
+        return;
+      }
+
+      try {
+        const stream = await navigator.mediaDevices.getDisplayMedia({
+          video: { frameRate: 60, displaySurface: "browser" },
+          audio: true
+        });
+
+        recordedChunks = [];
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'video/webm;codecs=vp9' });
+
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) recordedChunks.push(e.data);
+        };
+
+        mediaRecorder.onstop = () => {
+          const blob = new Blob(recordedChunks, { type: 'video/webm' });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = url;
+          a.download = `AlarmSimple-Cinematic-Promo-${Date.now()}.webm`;
+          a.click();
+          stream.getTracks().forEach(track => track.stop());
+        };
+
+        mediaRecorder.start();
+        label.innerText = "Остановить запись";
+
+        if (!tourInterval) startCinematicVideoTour();
+
+      } catch (err) {
+        alert("Запись экрана не запущена или отменена.");
+      }
+    }
+  </script>
+</body>
+</html>

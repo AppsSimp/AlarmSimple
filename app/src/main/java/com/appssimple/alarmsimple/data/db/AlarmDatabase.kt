@@ -18,7 +18,7 @@ import com.appssimple.alarmsimple.data.db.entity.SleepSessionEntity
         SleepEpochEntity::class,
         AudioSnippetEntity::class
     ],
-    version = 1,
+    version = 3,
     exportSchema = true
 )
 abstract class AlarmDatabase : RoomDatabase() {

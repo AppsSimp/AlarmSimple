@@ -1,8 +1,5 @@
 package com.appssimple.alarmsimple.ui.onboarding
 
-import android.Manifest
-import android.os.Build
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
@@ -11,7 +8,7 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Bed
+import androidx.compose.material.icons.filled.Bedtime
 import androidx.compose.material.icons.filled.LockClock
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.QrCode
@@ -20,8 +17,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -29,16 +26,19 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import com.appssimple.alarmsimple.R
 import com.appssimple.alarmsimple.data.preferences.UserPreferences
+import com.appssimple.alarmsimple.ui.components.AppBackground
+import com.appssimple.alarmsimple.ui.theme.BrandPrimary
+import com.appssimple.alarmsimple.ui.theme.PrimaryGradient
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.launch
 import javax.inject.Inject
 
-data class OnboardingPageData(
+data class OnboardingStep(
     val title: String,
     val description: String,
-    val icon: ImageVector
+    val icon: ImageVector,
+    val tint: Color
 )
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -49,150 +49,156 @@ fun OnboardingScreen(
 ) {
     val coroutineScope = rememberCoroutineScope()
 
-    val pages = listOf(
-        OnboardingPageData(
+    val steps = listOf(
+        OnboardingStep(
             title = "Умный трекинг сна",
-            description = "Положите телефон на матрас рядом с подушкой. Приложение отслеживает микродвижения и дыхание, определяя когда вы реально уснули.",
-            icon = Icons.Default.Bed
+            description = "Положите телефон на матрас рядом с подушкой. Акселерометр и микрофон непрерывно фиксируют движения тела и дыхание, определяя точную фазу сна и отсеивая короткие сессии до 10 минут.",
+            icon = Icons.Default.Bedtime,
+            tint = Color(0xFF6366F1)
         ),
-        OnboardingPageData(
-            title = "Пробуждение в легкую фазу",
-            description = "Задайте окно пробуждения (например, за 30 минут). Будильник сработает когда вы начнете шевелиться, чтобы подъем был легким и бодрым.",
-            icon = Icons.Default.LockClock
+        OnboardingStep(
+            title = "Пробуждение в лёгкую фазу",
+            description = "Укажите окно пробуждения (например, ±30 минут). Будильник отследит момент смены позы в лёгкой фазе сна и разбудит вас бодрым и отдохнувшим.",
+            icon = Icons.Default.LockClock,
+            tint = Color(0xFF10B981)
         ),
-        OnboardingPageData(
-            title = "Квесты и анти-сон",
-            description = "Тяжело вставать? Настройте NFC-метку в ванной, штрихкод зубной пасты или блиц-математику. При опоздании включится режим сирены!",
-            icon = Icons.Default.QrCode
+        OnboardingStep(
+            title = "Задачи на пробуждение",
+            description = "Чтобы выключить сигнал, приложите NFC-метку, отсканируйте камерой штрихкод в ванной или решите математические задачи для окончательного пробуждения мозга.",
+            icon = Icons.Default.QrCode,
+            tint = Color(0xFFF59E0B)
         ),
-        OnboardingPageData(
-            title = "Приватность и разрешения",
-            description = "Нам нужен доступ к микрофону для анализа дыхания и звуков. Все вычисления производятся локально на телефоне — мы ничего не отправляем в сеть.",
-            icon = Icons.Default.Mic
+        OnboardingStep(
+            title = "Регулярность и приватность",
+            description = "Настраивайте будильники по дням недели, выбирайте любые мелодии телефона. Все данные и звук анализируются локально без интернета.",
+            icon = Icons.Default.Mic,
+            tint = Color(0xFF38BDF8)
         )
     )
 
-    val pagerState = rememberPagerState(pageCount = { pages.size })
+    val pagerState = rememberPagerState(pageCount = { steps.size })
 
-    Scaffold { padding ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(padding)
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.SpaceBetween
-        ) {
-            // Skip button
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End
-            ) {
-                if (pagerState.currentPage < pages.size - 1) {
-                    TextButton(onClick = {
-                        viewModel.completeOnboarding { onFinished() }
-                    }) {
-                        Text("Пропустить")
-                    }
-                } else {
-                    Spacer(Modifier.height(48.dp))
-                }
-            }
-
-            // Pager content
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.weight(1f)
-            ) { pageIndex ->
-                val page = pages[pageIndex]
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 16.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(120.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primaryContainer),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = page.icon,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.size(64.dp)
-                        )
-                    }
-
-                    Spacer(Modifier.height(32.dp))
-
-                    Text(
-                        text = page.title,
-                        fontSize = 26.sp,
-                        fontWeight = FontWeight.Bold,
-                        textAlign = TextAlign.Center
-                    )
-
-                    Spacer(Modifier.height(16.dp))
-
-                    Text(
-                        text = page.description,
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        textAlign = TextAlign.Center,
-                        lineHeight = 24.sp
-                    )
-                }
-            }
-
-            // Bottom navigation & indicators
+    AppBackground {
+        Scaffold(containerColor = Color.Transparent) { padding ->
             Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally,
-                modifier = Modifier.fillMaxWidth()
+                verticalArrangement = Arrangement.SpaceBetween
             ) {
-                // Indicators
+                // Top skip button
                 Row(
-                    horizontalArrangement = Arrangement.Center,
-                    modifier = Modifier.padding(bottom = 24.dp)
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
                 ) {
-                    repeat(pages.size) { index ->
-                        val isSelected = pagerState.currentPage == index
+                    if (pagerState.currentPage < steps.size - 1) {
+                        TextButton(onClick = { viewModel.completeOnboarding(onFinished) }) {
+                            Text("Пропустить", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    } else {
+                        Spacer(Modifier.height(48.dp))
+                    }
+                }
+
+                // Main pager
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.weight(1f)
+                ) { pageIndex ->
+                    val step = steps[pageIndex]
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 12.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.Center
+                    ) {
                         Box(
                             modifier = Modifier
-                                .padding(horizontal = 4.dp)
-                                .height(8.dp)
-                                .width(if (isSelected) 24.dp else 8.dp)
-                                .clip(RoundedCornerShape(4.dp))
-                                .background(
-                                    if (isSelected) MaterialTheme.colorScheme.primary
-                                    else MaterialTheme.colorScheme.outlineVariant
-                                )
+                                .size(110.dp)
+                                .clip(CircleShape)
+                                .background(step.tint.copy(alpha = 0.15f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = step.icon,
+                                contentDescription = null,
+                                tint = step.tint,
+                                modifier = Modifier.size(54.dp)
+                            )
+                        }
+
+                        Spacer(Modifier.height(32.dp))
+
+                        Text(
+                            text = step.title,
+                            fontSize = 26.sp,
+                            fontWeight = FontWeight.Bold,
+                            textAlign = TextAlign.Center
+                        )
+
+                        Spacer(Modifier.height(14.dp))
+
+                        Text(
+                            text = step.description,
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            lineHeight = 22.sp
                         )
                     }
                 }
 
-                // Action button
-                Button(
-                    onClick = {
-                        if (pagerState.currentPage < pages.size - 1) {
-                            coroutineScope.launch {
-                                pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                            }
-                        } else {
-                            viewModel.completeOnboarding { onFinished() }
-                        }
-                    },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(56.dp)
+                // Bottom indicators and action button
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Text(
-                        if (pagerState.currentPage < pages.size - 1) "Далее" else "Начать пользоваться",
-                        fontSize = 18.sp
-                    )
+                    // Indicators
+                    Row(
+                        horizontalArrangement = Arrangement.Center,
+                        modifier = Modifier.padding(bottom = 24.dp)
+                    ) {
+                        repeat(steps.size) { index ->
+                            val isSelected = pagerState.currentPage == index
+                            Box(
+                                modifier = Modifier
+                                    .padding(horizontal = 4.dp)
+                                    .height(6.dp)
+                                    .width(if (isSelected) 22.dp else 6.dp)
+                                    .clip(RoundedCornerShape(3.dp))
+                                    .background(
+                                        if (isSelected) BrandPrimary
+                                        else MaterialTheme.colorScheme.outlineVariant
+                                    )
+                            )
+                        }
+                    }
+
+                    Button(
+                        onClick = {
+                            if (pagerState.currentPage < steps.size - 1) {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(pagerState.currentPage + 1)
+                                }
+                            } else {
+                                viewModel.completeOnboarding(onFinished)
+                            }
+                        },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(54.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = ButtonDefaults.buttonColors(containerColor = BrandPrimary)
+                    ) {
+                        Text(
+                            text = if (pagerState.currentPage < steps.size - 1) "Далее" else "Начать пользоваться",
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
                 }
             }
         }
@@ -203,7 +209,6 @@ fun OnboardingScreen(
 class OnboardingViewModel @Inject constructor(
     private val userPreferences: UserPreferences
 ) : ViewModel() {
-
     fun completeOnboarding(onCompleted: () -> Unit) {
         viewModelScope.launch {
             userPreferences.setOnboardingCompleted(true)

@@ -35,6 +35,7 @@ import javax.inject.Inject
 class AlarmFiringService : Service() {
 
     @Inject lateinit var alarmDao: AlarmDao
+    @Inject lateinit var alarmScheduler: AlarmScheduler
 
     private val serviceScope = CoroutineScope(Dispatchers.Main + SupervisorJob())
     private var mediaPlayer: MediaPlayer? = null
@@ -43,6 +44,7 @@ class AlarmFiringService : Service() {
 
     private var currentAlarmId: Long = 0
     private var isSirenActive = false
+    private var isSirenEnabled = false
     private var isVolumeLockEnabled = false
     private var volumeObserver: VolumeObserver? = null
 
@@ -74,10 +76,16 @@ class AlarmFiringService : Service() {
             ACTION_GIVE_5_MINUTES -> handleGive5Minutes()
             ACTION_DISMISS -> dismissAlarm()
             ACTION_SNOOZE -> handleSnooze()
-            else -> startAlarmPlayback(currentAlarmId)
+            else -> {
+                if (currentAlarmId > 0) {
+                    startAlarmPlayback(currentAlarmId)
+                } else {
+                    stopSelf()
+                }
+            }
         }
 
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     private fun startAlarmPlayback(alarmId: Long) {
@@ -86,11 +94,15 @@ class AlarmFiringService : Service() {
         serviceScope.launch {
             val alarm = alarmDao.getAlarmById(alarmId)
             isVolumeLockEnabled = alarm?.volumeLockEnabled ?: false
+            isSirenEnabled = alarm?.sirenEnabled ?: false
 
             if (isVolumeLockEnabled) {
                 enforceMaxVolume()
                 startVolumeObserver()
             }
+
+            // Будильник приложения успешно сработал -> отключаем системный предохранитель
+            alarmScheduler.dismissSystemBackupAlarm()
 
             playAlarmSound(alarm?.ringtoneUri)
         }
@@ -177,8 +189,13 @@ class AlarmFiringService : Service() {
         questTimerJob?.cancel()
         questTimerJob = serviceScope.launch {
             delay(5 * 60 * 1000L) // 5 minutes grace period
-            // If quest wasn't completed in 5 minutes -> SIREN MODE!
-            triggerSirenMode()
+            if (isSirenEnabled) {
+                // If quest wasn't completed in 5 minutes -> SIREN MODE!
+                triggerSirenMode()
+            } else {
+                // Siren disabled: just resume the alarm at full volume.
+                mediaPlayer?.setVolume(1f, 1f)
+            }
         }
     }
 
@@ -193,7 +210,9 @@ class AlarmFiringService : Service() {
         }
 
         // Broadcast to Activity to update UI
-        val updateIntent = Intent(AlarmRingingActivity.ACTION_SIREN_TRIGGERED)
+        val updateIntent = Intent(AlarmRingingActivity.ACTION_SIREN_TRIGGERED).apply {
+            setPackage(packageName)
+        }
         sendBroadcast(updateIntent)
     }
 
@@ -223,10 +242,40 @@ class AlarmFiringService : Service() {
         abandonAudioFocus()
 
         // Tell SleepTrackingService to wrap up and compute final session stats
-        val stopTrackingIntent = Intent(this, SleepTrackingService::class.java).apply {
-            action = SleepTrackingService.ACTION_STOP_TRACKING
+        if (SleepTrackingService.isTracking.value) {
+            val stopTrackingIntent = Intent(this, SleepTrackingService::class.java).apply {
+                action = SleepTrackingService.ACTION_STOP_TRACKING
+            }
+            startService(stopTrackingIntent)
         }
-        startService(stopTrackingIntent)
+
+        // Handle alarm recurrence or deactivation
+        if (currentAlarmId > 0) {
+            serviceScope.launch {
+                val alarm = alarmDao.getAlarmById(currentAlarmId)
+                if (alarm != null) {
+                    val repeatDays = runCatching {
+                        val arr = org.json.JSONArray(alarm.repeatDays)
+                        (0 until arr.length()).map { arr.getInt(it) }.toSet()
+                    }.getOrDefault(emptySet())
+
+                    if (repeatDays.isNotEmpty() && alarm.targetTimeMs != null) {
+                        val cal = java.util.Calendar.getInstance().apply { timeInMillis = alarm.targetTimeMs }
+                        val nextTrigger = alarmScheduler.calculateNextTriggerTime(
+                            hour = cal.get(java.util.Calendar.HOUR_OF_DAY),
+                            minute = cal.get(java.util.Calendar.MINUTE),
+                            repeatDays = repeatDays,
+                            repeatIntervalWeeks = alarm.repeatIntervalWeeks
+                        )
+                        alarmDao.updateAlarm(alarm.copy(targetTimeMs = nextTrigger, isActive = true))
+                        alarmScheduler.scheduleAlarm(nextTrigger, alarm.id)
+                    } else if (repeatDays.isEmpty()) {
+                        // Разовый будильник после срабатывания деактивируется
+                        alarmDao.setAlarmActive(alarm.id, false)
+                    }
+                }
+            }
+        }
 
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()

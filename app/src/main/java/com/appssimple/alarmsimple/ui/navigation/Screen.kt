@@ -23,4 +23,7 @@ sealed interface Screen {
     
     @Serializable
     data object SleepHistory : Screen
+    
+    @Serializable
+    data object SleepTracking : Screen
 }

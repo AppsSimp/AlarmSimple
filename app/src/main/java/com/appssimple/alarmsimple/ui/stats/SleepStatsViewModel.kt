@@ -1,5 +1,6 @@
 package com.appssimple.alarmsimple.ui.stats
 
+import android.media.AudioAttributes
 import android.media.MediaPlayer
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -8,6 +9,7 @@ import com.appssimple.alarmsimple.data.db.dao.SleepEpochDao
 import com.appssimple.alarmsimple.data.db.dao.SleepSessionDao
 import com.appssimple.alarmsimple.data.db.entity.AudioSnippetEntity
 import com.appssimple.alarmsimple.data.db.entity.SleepEpochEntity
+import com.appssimple.alarmsimple.domain.model.SleepPhase
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -16,16 +18,21 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
-import java.util.*
+import java.util.Date
+import java.util.Locale
 import javax.inject.Inject
 
 data class SleepStatsUiState(
     val sessionId: Long = 0,
+    val isLoaded: Boolean = false,
     val totalSleepFormatted: String = "0ч 0м",
     val sleepOnsetFormatted: String = "--:--",
     val wakeUpFormatted: String = "--:--",
     val sleepEfficiency: Int = 0,
+    val disturbanceCount: Int = 0,
+    val snoreMinutes: Int = 0,
     val epochs: List<SleepEpochEntity> = emptyList(),
+    val phaseMinutes: Map<String, Int> = emptyMap(),
     val snippets: List<AudioSnippetEntity> = emptyList(),
     val playingSnippetId: Long? = null
 )
@@ -44,10 +51,10 @@ class SleepStatsViewModel @Inject constructor(
 
     fun loadSession(sessionId: Long) {
         viewModelScope.launch {
-            val session = if (sessionId != -1L) {
+            val session = if (sessionId > 0) {
                 sleepSessionDao.getSessionById(sessionId)
             } else {
-                sleepSessionDao.getLatestSession()
+                sleepSessionDao.getLatestValidSession()
             } ?: return@launch
 
             val epochs = sleepEpochDao.getEpochsForSessionOnce(session.id)
@@ -58,28 +65,37 @@ class SleepStatsViewModel @Inject constructor(
             val wakeStr = session.wakeUpMs?.let { timeFormat.format(Date(it)) } ?: "--:--"
 
             val totalSleepMinutes = if (session.sleepOnsetMs != null && session.wakeUpMs != null) {
-                ((session.wakeUpMs - session.sleepOnsetMs) / 60_000L).toInt()
+                ((session.wakeUpMs - session.sleepOnsetMs) / 60_000L).toInt().coerceAtLeast(0)
             } else 0
 
             val timeInBedMinutes = if (session.wakeUpMs != null) {
-                ((session.wakeUpMs - session.trackingStartMs) / 60_000L).toInt()
+                ((session.wakeUpMs - session.trackingStartMs) / 60_000L).toInt().coerceAtLeast(1)
             } else 1
 
-            val efficiency = if (timeInBedMinutes > 0) {
-                ((totalSleepMinutes.toFloat() / timeInBedMinutes) * 100).toInt().coerceIn(0, 100)
-            } else 0
+            val efficiency = ((totalSleepMinutes.toFloat() / timeInBedMinutes) * 100)
+                .toInt()
+                .coerceIn(0, 100)
 
             val hours = totalSleepMinutes / 60
             val mins = totalSleepMinutes % 60
 
+            val phaseMinutes = epochs
+                .groupingBy { it.phase }
+                .eachCount()
+                .mapValues { (_, count) -> (count + 1) / 2 }
+
             _uiState.update {
                 it.copy(
                     sessionId = session.id,
+                    isLoaded = true,
                     totalSleepFormatted = "${hours}ч ${mins}м",
                     sleepOnsetFormatted = onsetStr,
                     wakeUpFormatted = wakeStr,
                     sleepEfficiency = efficiency,
+                    disturbanceCount = session.disturbanceCount,
+                    snoreMinutes = session.snoreMinutes,
                     epochs = epochs,
+                    phaseMinutes = phaseMinutes,
                     snippets = snippets
                 )
             }
@@ -100,15 +116,23 @@ class SleepStatsViewModel @Inject constructor(
         if (!file.exists()) return
 
         try {
-            mediaPlayer = MediaPlayer().apply {
-                setDataSource(snippet.filePath)
-                prepare()
-                setOnCompletionListener {
-                    stopAudioPlayback()
-                }
-                start()
-            }
             _uiState.update { it.copy(playingSnippetId = snippet.id) }
+            mediaPlayer = MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_MEDIA)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
+                        .build()
+                )
+                setDataSource(snippet.filePath)
+                setOnPreparedListener { start() }
+                setOnCompletionListener { stopAudioPlayback() }
+                setOnErrorListener { _, _, _ ->
+                    stopAudioPlayback()
+                    true
+                }
+                prepareAsync()
+            }
         } catch (e: Exception) {
             e.printStackTrace()
             stopAudioPlayback()
@@ -116,8 +140,8 @@ class SleepStatsViewModel @Inject constructor(
     }
 
     fun stopAudioPlayback() {
-        mediaPlayer?.stop()
-        mediaPlayer?.release()
+        runCatching { mediaPlayer?.stop() }
+        runCatching { mediaPlayer?.release() }
         mediaPlayer = null
         _uiState.update { it.copy(playingSnippetId = null) }
     }

@@ -21,15 +21,20 @@ class UserPreferences @Inject constructor(
 ) {
     companion object {
         val ONBOARDING_COMPLETED = booleanPreferencesKey("onboarding_completed")
+        val COACH_MARKS_SHOWN = booleanPreferencesKey("coach_marks_shown")
         val HISTORY_RETENTION_DAYS = intPreferencesKey("history_retention_days")
         val DEFAULT_SNOOZE_MINUTES = intPreferencesKey("default_snooze_minutes")
         val DEFAULT_SMART_WAKE_WINDOW = intPreferencesKey("default_smart_wake_window")
         val DEFAULT_VOLUME_LOCK = booleanPreferencesKey("default_volume_lock")
         val DEFAULT_SIREN_ENABLED = booleanPreferencesKey("default_siren_enabled")
+        val BACKUP_SYSTEM_ALARM_ENABLED = booleanPreferencesKey("backup_system_alarm_enabled")
     }
     
     val onboardingCompleted: Flow<Boolean> = context.dataStore.data
         .map { it[ONBOARDING_COMPLETED] ?: false }
+
+    val coachMarksShown: Flow<Boolean> = context.dataStore.data
+        .map { it[COACH_MARKS_SHOWN] ?: false }
     
     /** 0 means unlimited */
     val historyRetentionDays: Flow<Int> = context.dataStore.data
@@ -46,9 +51,16 @@ class UserPreferences @Inject constructor(
     
     val defaultSirenEnabled: Flow<Boolean> = context.dataStore.data
         .map { it[DEFAULT_SIREN_ENABLED] ?: false }
+
+    val backupSystemAlarmEnabled: Flow<Boolean> = context.dataStore.data
+        .map { it[BACKUP_SYSTEM_ALARM_ENABLED] ?: false }
     
     suspend fun setOnboardingCompleted(completed: Boolean) {
         context.dataStore.edit { it[ONBOARDING_COMPLETED] = completed }
+    }
+
+    suspend fun setCoachMarksShown(shown: Boolean) {
+        context.dataStore.edit { it[COACH_MARKS_SHOWN] = shown }
     }
     
     suspend fun setHistoryRetentionDays(days: Int) {
@@ -69,5 +81,9 @@ class UserPreferences @Inject constructor(
     
     suspend fun setDefaultSirenEnabled(enabled: Boolean) {
         context.dataStore.edit { it[DEFAULT_SIREN_ENABLED] = enabled }
+    }
+
+    suspend fun setBackupSystemAlarmEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[BACKUP_SYSTEM_ALARM_ENABLED] = enabled }
     }
 }
