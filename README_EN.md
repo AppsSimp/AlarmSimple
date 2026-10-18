@@ -80,4 +80,8 @@ When tasks are enabled, the normal "Dismiss" button is hidden — only a **"Give
 
 ## 📄 License
 
-This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details.
+This project is licensed under the **MIT License**.
+
+You are free to use, copy, modify, merge, publish, distribute, sublicense, and sell copies of the software. **The only requirement** is that the original copyright notice and author attribution (`Copyright (c) 2026 AppsSimple`) must be included in all copies or substantial portions of the Software.
+
+See the [LICENSE](LICENSE) file for details.
