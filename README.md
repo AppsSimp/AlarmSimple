@@ -1,5 +1,7 @@
 <div align="center">
 
+<img src="docs/assets/icon.png" width="128" height="128" alt="AlarmSimple Logo" style="border-radius: 28px;" />
+
 # 🔔 AlarmSimple
 
 [![RU](https://img.shields.io/badge/Язык-Русский-blue?style=for-the-badge)](README.md)
