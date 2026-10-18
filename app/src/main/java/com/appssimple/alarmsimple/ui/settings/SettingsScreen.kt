@@ -172,6 +172,51 @@ fun SettingsScreen(
                             }
                             Switch(checked = defaultVolumeLock, onCheckedChange = viewModel::setDefaultVolumeLock)
                         }
+
+                        val context = androidx.compose.ui.platform.LocalContext.current
+                        var hasOverlayPermission by remember {
+                            mutableStateOf(
+                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                                    android.provider.Settings.canDrawOverlays(context)
+                                } else true
+                            )
+                        }
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Поверх других приложений", fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    if (hasOverlayPermission) "Разрешение предоставлено. Экран будильника гарантированно всплывает поверх любых окон."
+                                    else "Требуется для надёжного открытия будильника при разблокированном телефоне и поверх любых приложений.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (hasOverlayPermission) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+                                )
+                            }
+                            if (!hasOverlayPermission) {
+                                Button(
+                                    onClick = {
+                                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                                            val intent = android.content.Intent(
+                                                android.provider.Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                                android.net.Uri.parse("package:${context.packageName}")
+                                            )
+                                            context.startActivity(intent)
+                                        }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Text("Включить", fontSize = 12.sp)
+                                }
+                            } else {
+                                Text("Включено", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
                     }
                 }
 

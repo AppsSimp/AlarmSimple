@@ -403,6 +403,7 @@ fun AlarmSetupScreen(
                             Spacer(Modifier.height(10.dp))
 
                             // Интервал повторения: каждую неделю / через неделю / через две недели
+                            val isRepeatEnabled = state.repeatDays.isNotEmpty()
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -412,24 +413,31 @@ fun AlarmSetupScreen(
                                     2 to "Через неделю",
                                     3 to "Через 2 нед."
                                 ).forEach { (interval, label) ->
-                                    val isSelected = state.repeatIntervalWeeks == interval
+                                    val isSelected = isRepeatEnabled && state.repeatIntervalWeeks == interval
                                     Box(
                                         modifier = Modifier
                                             .weight(1f)
                                             .height(36.dp)
                                             .clip(RoundedCornerShape(10.dp))
                                             .background(
-                                                if (isSelected) BrandPrimary
-                                                else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                                when {
+                                                    !isRepeatEnabled -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.2f)
+                                                    isSelected -> BrandPrimary
+                                                    else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                                                }
                                             )
-                                            .clickable { viewModel.setRepeatIntervalWeeks(interval) },
+                                            .clickable(enabled = isRepeatEnabled) { viewModel.setRepeatIntervalWeeks(interval) },
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
                                             text = label,
                                             fontSize = 12.sp,
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
-                                            color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                            color = when {
+                                                !isRepeatEnabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                                                isSelected -> Color.White
+                                                else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                            }
                                         )
                                     }
                                 }

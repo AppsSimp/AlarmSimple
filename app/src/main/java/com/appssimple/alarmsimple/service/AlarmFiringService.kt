@@ -58,6 +58,12 @@ class AlarmFiringService : Service() {
         const val ACTION_GIVE_5_MINUTES = "com.appssimple.alarmsimple.ACTION_GIVE_5_MINUTES"
         const val ACTION_DISMISS = "com.appssimple.alarmsimple.ACTION_DISMISS"
         const val ACTION_SNOOZE = "com.appssimple.alarmsimple.ACTION_SNOOZE"
+
+        private val _isRinging = kotlinx.coroutines.flow.MutableStateFlow(false)
+        val isRinging: kotlinx.coroutines.flow.StateFlow<Boolean> = _isRinging
+
+        private val _ringingAlarmId = kotlinx.coroutines.flow.MutableStateFlow(-1L)
+        val ringingAlarmId: kotlinx.coroutines.flow.StateFlow<Long> = _ringingAlarmId
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -89,6 +95,8 @@ class AlarmFiringService : Service() {
     }
 
     private fun startAlarmPlayback(alarmId: Long) {
+        _isRinging.value = true
+        _ringingAlarmId.value = alarmId
         startForegroundWithFullScreenIntent(alarmId)
 
         serviceScope.launch {
@@ -102,7 +110,8 @@ class AlarmFiringService : Service() {
             }
 
             // Будильник приложения успешно сработал -> отключаем системный предохранитель
-            alarmScheduler.dismissSystemBackupAlarm()
+            alarmScheduler.dismissSystemBackupAlarm("AlarmSimple (Предохранитель)")
+            alarmScheduler.dismissSystemBackupAlarm("Страховка: AlarmSimple")
 
             playAlarmSound(alarm?.ringtoneUri)
         }
@@ -243,6 +252,10 @@ class AlarmFiringService : Service() {
     }
 
     private fun dismissAlarm() {
+        _isRinging.value = false
+        val firingAlarmId = currentAlarmId
+        _ringingAlarmId.value = -1L
+
         questTimerJob?.cancel()
         volumeRampJob?.cancel()
         stopVolumeObserver()
@@ -253,6 +266,10 @@ class AlarmFiringService : Service() {
 
         abandonAudioFocus()
 
+        // Отключаем системный предохранитель при выключении
+        alarmScheduler.dismissSystemBackupAlarm("AlarmSimple (Предохранитель)")
+        alarmScheduler.dismissSystemBackupAlarm("Страховка: AlarmSimple")
+
         // Tell SleepTrackingService to wrap up and compute final session stats
         if (SleepTrackingService.isTracking.value) {
             val stopTrackingIntent = Intent(this, SleepTrackingService::class.java).apply {
@@ -262,9 +279,9 @@ class AlarmFiringService : Service() {
         }
 
         // Handle alarm recurrence or deactivation
-        if (currentAlarmId > 0) {
+        if (firingAlarmId > 0) {
             serviceScope.launch {
-                val alarm = alarmDao.getAlarmById(currentAlarmId)
+                val alarm = alarmDao.getAlarmById(firingAlarmId)
                 if (alarm != null) {
                     val repeatDays = runCatching {
                         val arr = org.json.JSONArray(alarm.repeatDays)
@@ -282,7 +299,8 @@ class AlarmFiringService : Service() {
                         alarmDao.updateAlarm(alarm.copy(targetTimeMs = nextTrigger, isActive = true))
                         alarmScheduler.scheduleAlarm(nextTrigger, alarm.id)
                     } else if (repeatDays.isEmpty()) {
-                        // Разовый будильник после срабатывания деактивируется
+                        // Разовый будильник после срабатывания полностью деактивируется
+                        alarmScheduler.cancelAlarm(alarm.id)
                         alarmDao.setAlarmActive(alarm.id, false)
                     }
                 }

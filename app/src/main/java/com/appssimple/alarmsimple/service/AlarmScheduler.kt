@@ -117,14 +117,24 @@ class AlarmScheduler @Inject constructor(
     /**
      * Отключает системный будильник, когда будильник приложения благополучно сработал.
      */
-    fun dismissSystemBackupAlarm() {
+    fun dismissSystemBackupAlarm(label: String = "AlarmSimple (Предохранитель)") {
         try {
             val intent = Intent(android.provider.AlarmClock.ACTION_DISMISS_ALARM).apply {
+                putExtra(android.provider.AlarmClock.EXTRA_ALARM_SEARCH_MODE, android.provider.AlarmClock.ALARM_SEARCH_MODE_LABEL)
+                putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, label)
+                putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK
             }
             context.startActivity(intent)
         } catch (e: Exception) {
-            // Некоторые вендоры не поддерживают ACTION_DISMISS_ALARM без UI
+            // Запасной вариант без параметров, если производитель не поддерживает фильтрацию по лейблу
+            try {
+                val fallbackIntent = Intent(android.provider.AlarmClock.ACTION_DISMISS_ALARM).apply {
+                    putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                }
+                context.startActivity(fallbackIntent)
+            } catch (ignored: Exception) {}
         }
     }
 

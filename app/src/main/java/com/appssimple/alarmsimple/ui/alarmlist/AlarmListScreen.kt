@@ -244,9 +244,15 @@ fun AlarmListScreen(
                                 if (alarm.mode == AlarmMode.DURATION.name) {
                                     null
                                 } else if (alarm.targetTimeMs != null) {
-                                    val trigger = if (alarm.targetTimeMs > now) {
-                                        alarm.targetTimeMs
-                                    } else {
+                                    val repeatDays = runCatching {
+                                        val arr = org.json.JSONArray(alarm.repeatDays)
+                                        (0 until arr.length()).map { arr.getInt(it) }.toSet()
+                                    }.getOrDefault(emptySet())
+
+                                    if (alarm.targetTimeMs > now) {
+                                        Pair(alarm, alarm.targetTimeMs)
+                                    } else if (repeatDays.isNotEmpty()) {
+                                        // Повторяющийся будильник: ищем следующий день
                                         val cal = Calendar.getInstance().apply { timeInMillis = alarm.targetTimeMs }
                                         val alarmCal = Calendar.getInstance().apply {
                                             set(Calendar.HOUR_OF_DAY, cal.get(Calendar.HOUR_OF_DAY))
@@ -257,9 +263,11 @@ fun AlarmListScreen(
                                         if (alarmCal.timeInMillis <= now) {
                                             alarmCal.add(Calendar.DAY_OF_YEAR, 1)
                                         }
-                                        alarmCal.timeInMillis
+                                        Pair(alarm, alarmCal.timeInMillis)
+                                    } else {
+                                        // Одноразовый будильник с прошедшим временем не должен показывать срабатывание на следующий день
+                                        null
                                     }
-                                    Pair(alarm, trigger)
                                 } else null
                             }
 
