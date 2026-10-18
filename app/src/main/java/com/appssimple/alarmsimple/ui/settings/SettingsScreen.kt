@@ -39,6 +39,7 @@ import javax.inject.Inject
 @Composable
 fun SettingsScreen(
     onNavigateBack: () -> Unit,
+    onOpenAdminPanel: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel()
 ) {
     val retentionDays by viewModel.historyRetentionDays.collectAsState(initial = 0)
@@ -220,8 +221,17 @@ fun SettingsScreen(
                     }
                 }
 
-                // О приложении
-                ModernCard {
+                // О приложении (5 тапов открывают админку)
+                var aboutTapCount by remember { mutableIntStateOf(0) }
+                ModernCard(
+                    modifier = Modifier.clickable {
+                        aboutTapCount++
+                        if (aboutTapCount >= 5) {
+                            aboutTapCount = 0
+                            onOpenAdminPanel()
+                        }
+                    }
+                ) {
                     Column {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Info, contentDescription = null, tint = MaterialTheme.colorScheme.primary)

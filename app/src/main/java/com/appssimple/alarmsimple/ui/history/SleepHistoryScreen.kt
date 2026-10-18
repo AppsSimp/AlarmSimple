@@ -10,6 +10,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Insights
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -38,14 +39,23 @@ import java.text.SimpleDateFormat
 import java.util.*
 import javax.inject.Inject
 
+enum class SleepAnalysisPeriod(val label: String) {
+    DAY("День"),
+    WEEK("Неделя"),
+    MONTH("Месяц"),
+    YEAR("Год")
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SleepHistoryScreen(
     onOpenSession: (Long) -> Unit,
-    onNavigateBack: () -> Unit,
+    onNavigateBack: () -> Unit = {},
+    showBackButton: Boolean = true,
     viewModel: SleepHistoryViewModel = hiltViewModel()
 ) {
     val sessions by viewModel.sessions.collectAsState(initial = emptyList())
+    var selectedPeriod by remember { mutableStateOf(SleepAnalysisPeriod.WEEK) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
@@ -55,50 +65,94 @@ fun SleepHistoryScreen(
             snackbarHost = { SnackbarHost(snackbarHostState) },
             topBar = {
                 TopAppBar(
-                    title = { Text("История сна", fontWeight = FontWeight.Bold) },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Insights, contentDescription = null, tint = BrandPrimary)
+                            Spacer(Modifier.width(10.dp))
+                            Text("Сон и аналитика", fontWeight = FontWeight.Bold)
+                        }
+                    },
                     navigationIcon = {
-                        IconButton(onClick = onNavigateBack) {
-                            Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                        if (showBackButton) {
+                            IconButton(onClick = onNavigateBack) {
+                                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
+                            }
                         }
                     },
                     colors = TopAppBarDefaults.topAppBarColors(containerColor = Color.Transparent)
                 )
             }
         ) { padding ->
-            if (sessions.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(32.dp)) {
-                        Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(54.dp))
-                        Spacer(Modifier.height(16.dp))
-                        Text(
-                            text = "Пока нет сохранённых ночей",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(Modifier.height(4.dp))
-                        Text(
-                            text = "Здесь появятся ваши ночи сна продолжительностью более 10 минут.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = androidx.compose.ui.text.style.TextAlign.Center
-                        )
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(horizontal = 16.dp),
+                verticalArrangement = Arrangement.spacedBy(14.dp)
+            ) {
+                // Вкладки переключения периода анализа: День / Неделя / Месяц / Год
+                item {
+                    SingleChoiceSegmentedButtonRow(
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        SleepAnalysisPeriod.entries.forEachIndexed { index, period ->
+                            SegmentedButton(
+                                selected = selectedPeriod == period,
+                                onClick = { selectedPeriod = period },
+                                shape = SegmentedButtonDefaults.itemShape(index = index, count = SleepAnalysisPeriod.entries.size),
+                                colors = SegmentedButtonDefaults.colors(
+                                    activeContainerColor = BrandPrimary,
+                                    activeContentColor = Color.White
+                                )
+                            ) {
+                                Text(period.label, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        }
                     }
                 }
-            } else {
-                LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(padding)
-                        .padding(horizontal = 16.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    item { Spacer(Modifier.height(4.dp)) }
 
+                // Карточка детального анализа за выбранный период
+                item {
+                    SleepPeriodAnalysisCard(
+                        period = selectedPeriod,
+                        sessions = sessions
+                    )
+                }
+
+                item {
+                    Text(
+                        text = "Журнал ночей (${sessions.size})",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(top = 8.dp)
+                    )
+                }
+
+                if (sessions.isEmpty()) {
+                    item {
+                        ModernCard(contentPadding = PaddingValues(28.dp)) {
+                            Column(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Icon(Icons.Default.History, contentDescription = null, tint = MaterialTheme.colorScheme.outline, modifier = Modifier.size(48.dp))
+                                Spacer(Modifier.height(12.dp))
+                                Text(
+                                    text = "Пока нет записей сна",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    text = "Здесь появятся ваши ночи сна с фазами, ворочаниями и анализом.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = androidx.compose.ui.text.style.TextAlign.Center
+                                )
+                            }
+                        }
+                    }
+                } else {
                     items(sessions, key = { it.id }) { session ->
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { dismissVal ->
@@ -137,13 +191,169 @@ fun SleepHistoryScreen(
                             )
                         }
                     }
-
-                    item { Spacer(Modifier.height(32.dp)) }
                 }
+
+                item { Spacer(Modifier.height(88.dp)) }
             }
         }
     }
 }
+
+@Composable
+fun SleepPeriodAnalysisCard(
+    period: SleepAnalysisPeriod,
+    sessions: List<SleepSessionEntity>
+) {
+    val now = System.currentTimeMillis()
+    val periodCutoff = remember(period, now) {
+        val cal = Calendar.getInstance()
+        when (period) {
+            SleepAnalysisPeriod.DAY -> cal.apply { add(Calendar.DAY_OF_YEAR, -1) }.timeInMillis
+            SleepAnalysisPeriod.WEEK -> cal.apply { add(Calendar.DAY_OF_YEAR, -7) }.timeInMillis
+            SleepAnalysisPeriod.MONTH -> cal.apply { add(Calendar.DAY_OF_YEAR, -30) }.timeInMillis
+            SleepAnalysisPeriod.YEAR -> cal.apply { add(Calendar.DAY_OF_YEAR, -365) }.timeInMillis
+        }
+    }
+
+    val periodSessions = remember(sessions, periodCutoff) {
+        sessions.filter { it.trackingStartMs >= periodCutoff }
+    }
+
+    val (avgHours, avgEfficiency, totalDebtMinutes, analysisText, statusColor) = remember(periodSessions, period) {
+        if (periodSessions.isEmpty()) {
+            Triple(0f, 0, 0) to ("Нет данных за этот период. Спите с приложением для точной статистики." to Color.Gray)
+        } else {
+            val totalMinutes = periodSessions.mapNotNull {
+                if (it.sleepOnsetMs != null && it.wakeUpMs != null) {
+                    ((it.wakeUpMs - it.sleepOnsetMs) / 60_000L).toInt()
+                } else null
+            }
+
+            val avgMins = if (totalMinutes.isNotEmpty()) totalMinutes.average().toFloat() else 0f
+            val avgH = avgMins / 60f
+
+            val efficiencies = periodSessions.mapNotNull {
+                if (it.sleepOnsetMs != null && it.wakeUpMs != null) {
+                    val sleep = it.wakeUpMs - it.sleepOnsetMs
+                    val bed = it.wakeUpMs - it.trackingStartMs
+                    if (bed > 0) ((sleep.toFloat() / bed) * 100).toInt() else null
+                } else null
+            }
+            val avgEff = if (efficiencies.isNotEmpty()) efficiencies.average().toInt() else 0
+
+            // Норма сна взрослого: 8 часов в сутки (480 минут)
+            val expectedTotalMinutes = periodSessions.size * 480
+            val actualTotalMinutes = totalMinutes.sum()
+            val balance = actualTotalMinutes - expectedTotalMinutes
+
+            val text: String
+            val col: Color
+            when {
+                balance < -90 -> {
+                    val debtHours = (-balance) / 60
+                    val debtMins = (-balance) % 60
+                    text = "⚠️ Зафиксирован недосып: дефицит $debtHours ч $debtMins мин. Глубокие фазы сна сокращаются, повышается утомляемость. Рекомендуем лечь спать на 40 минут раньше."
+                    col = Color(0xFFF43F5E)
+                }
+                balance > 90 -> {
+                    val overHours = balance / 60
+                    text = "💤 Пересып: превышение нормы на $overHours ч. Длительный сон может вызывать дневную сонливость и смещение циркадных ритмов."
+                    col = Color(0xFFFBBF24)
+                }
+                else -> {
+                    text = "✅ Отличный баланс сна: вы находитесь в оптимальной норме (~8 часов). Восстановление организма и баланс глубоких/REM фаз на максимуме."
+                    col = Color(0xFF10B981)
+                }
+            }
+
+            Triple(avgH, avgEff, balance) to (text to col)
+        }.let { (stats, textCol) ->
+            Tuple5(stats.first, stats.second, stats.third, textCol.first, textCol.second)
+        }
+    }
+
+    ModernCard(
+        backgroundColor = Color(0xFF141E38),
+        borderColor = BrandPrimary.copy(alpha = 0.35f),
+        contentPadding = PaddingValues(18.dp)
+    ) {
+        Column {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Анализ сна (${period.label.lowercase()})",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White
+                )
+                ModernBadge(
+                    text = if (totalDebtMinutes < -30) "Недосып" else if (totalDebtMinutes > 30) "Пересып" else "В норме",
+                    color = statusColor
+                )
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Text("В среднем сна", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "%.1f ч".format(Locale.US, avgHours),
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+                Column {
+                    Text("Эффективность", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "$avgEfficiency%",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = if (avgEfficiency >= 85) Color(0xFF10B981) else Color(0xFFFBBF24)
+                    )
+                }
+                Column {
+                    Text("Ночей в базе", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = "${periodSessions.size}",
+                        fontSize = 24.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = BrandPrimary
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+            HorizontalDivider(color = Color.White.copy(alpha = 0.08f))
+            Spacer(Modifier.height(12.dp))
+
+            Text(
+                text = analysisText,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 18.sp
+            )
+        }
+    }
+}
+
+private data class Tuple5<A, B, C, D, E>(
+    val first: A,
+    val second: B,
+    val third: C,
+    val fourth: D,
+    val fifth: E
+)
 
 @Composable
 fun SleepHistoryCardItem(
@@ -164,9 +374,10 @@ fun SleepHistoryCardItem(
     val mins = totalSleepMinutes % 60
 
     ModernCard(
-        modifier = Modifier.fillMaxWidth(),
-        contentPadding = PaddingValues(16.dp),
-        onClick = onClick
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        contentPadding = PaddingValues(16.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -176,17 +387,17 @@ fun SleepHistoryCardItem(
             Column {
                 Text(
                     text = dateStr,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "${hours}ч ${mins}м",
-                    fontSize = 28.sp,
+                    text = "${hours}ч ${mins}м сна",
+                    fontSize = 22.sp,
                     fontWeight = FontWeight.Bold,
-                    color = BrandPrimary,
-                    letterSpacing = (-0.5).sp
+                    color = BrandPrimary
                 )
+                Spacer(Modifier.height(2.dp))
                 Text(
                     text = "Сон с $onsetStr до $wakeStr",
                     style = MaterialTheme.typography.bodySmall,

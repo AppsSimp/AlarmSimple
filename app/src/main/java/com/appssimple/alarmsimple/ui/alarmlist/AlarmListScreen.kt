@@ -50,7 +50,7 @@ fun AlarmListScreen(
     onAddAlarm: () -> Unit,
     onEditAlarm: (Long) -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenHistory: () -> Unit,
+    onOpenHistory: () -> Unit = {},
     onOpenSleepTracking: () -> Unit,
     onOpenHelp: () -> Unit,
     viewModel: AlarmListViewModel = hiltViewModel()
@@ -143,9 +143,6 @@ fun AlarmListScreen(
                         } else {
                             IconButton(onClick = onOpenHelp) {
                                 Icon(Icons.Default.HelpOutline, contentDescription = "Инструкция и возможности")
-                            }
-                            IconButton(onClick = onOpenHistory) {
-                                Icon(Icons.Default.History, contentDescription = "История сна")
                             }
                             IconButton(onClick = onOpenSettings) {
                                 Icon(Icons.Default.Settings, contentDescription = stringResource(R.string.settings))
