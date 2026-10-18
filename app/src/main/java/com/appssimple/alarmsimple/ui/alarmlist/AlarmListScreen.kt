@@ -769,7 +769,7 @@ fun AlarmItemCard(
                     }
                 }
 
-                if (!isSelectionMode) {
+                if (!isSelectionMode && !isDuration) {
                     Switch(
                         checked = alarm.isActive,
                         onCheckedChange = onToggleActive,
