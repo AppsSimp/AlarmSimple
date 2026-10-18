@@ -52,7 +52,7 @@ import com.appssimple.alarmsimple.ui.theme.BrandSecondary
 import com.appssimple.alarmsimple.ui.theme.BrandRose
 import com.appssimple.alarmsimple.ui.theme.PrimaryGradient
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun AlarmSetupScreen(
     alarmId: Long?,
@@ -299,28 +299,21 @@ fun AlarmSetupScreen(
                             }
                             Spacer(Modifier.height(6.dp))
 
-                            // Быстрые пресеты: Однократно на ближайшее время, Каждый день, По будням
-                            Row(
+                            // Быстрые пресеты повтора
+                            FlowRow(
                                 modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(4.dp)
                             ) {
                                 val isOnce = state.repeatDays.isEmpty()
                                 val isDaily = state.repeatDays.size == 7
                                 val isWorkdays = state.repeatDays == setOf(1, 2, 3, 4, 5)
+                                val isWeekend = state.repeatDays == setOf(6, 7)
 
                                 FilterChip(
                                     selected = isOnce,
                                     onClick = { viewModel.clearRepeatDays() },
-                                    label = { Text("На ближайшее время", fontSize = 12.sp) },
-                                    colors = FilterChipDefaults.filterChipColors(
-                                        selectedContainerColor = BrandPrimary,
-                                        selectedLabelColor = Color.White
-                                    )
-                                )
-                                FilterChip(
-                                    selected = isDaily,
-                                    onClick = { viewModel.setRepeatDays((1..7).toSet()) },
-                                    label = { Text("Ежедневно", fontSize = 12.sp) },
+                                    label = { Text("Один раз", fontSize = 12.sp) },
                                     colors = FilterChipDefaults.filterChipColors(
                                         selectedContainerColor = BrandPrimary,
                                         selectedLabelColor = Color.White
@@ -329,7 +322,25 @@ fun AlarmSetupScreen(
                                 FilterChip(
                                     selected = isWorkdays,
                                     onClick = { viewModel.setRepeatDays(setOf(1, 2, 3, 4, 5)) },
-                                    label = { Text("Будни", fontSize = 12.sp) },
+                                    label = { Text("По будням", fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = BrandPrimary,
+                                        selectedLabelColor = Color.White
+                                    )
+                                )
+                                FilterChip(
+                                    selected = isWeekend,
+                                    onClick = { viewModel.setRepeatDays(setOf(6, 7)) },
+                                    label = { Text("Выходные", fontSize = 12.sp) },
+                                    colors = FilterChipDefaults.filterChipColors(
+                                        selectedContainerColor = BrandPrimary,
+                                        selectedLabelColor = Color.White
+                                    )
+                                )
+                                FilterChip(
+                                    selected = isDaily,
+                                    onClick = { viewModel.setRepeatDays((1..7).toSet()) },
+                                    label = { Text("Каждый день", fontSize = 12.sp) },
                                     colors = FilterChipDefaults.filterChipColors(
                                         selectedContainerColor = BrandPrimary,
                                         selectedLabelColor = Color.White
