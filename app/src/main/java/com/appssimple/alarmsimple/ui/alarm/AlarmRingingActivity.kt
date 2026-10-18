@@ -534,7 +534,12 @@ fun BarcodeQuestView(
 ) {
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     val cameraExecutor = remember { Executors.newSingleThreadExecutor() }
-    val scanner = remember { BarcodeScanning.getClient() }
+    val scanner = remember {
+        val options = com.google.mlkit.vision.barcode.BarcodeScannerOptions.Builder()
+            .setBarcodeFormats(com.google.mlkit.vision.barcode.common.Barcode.FORMAT_ALL_FORMATS)
+            .build()
+        com.google.mlkit.vision.barcode.BarcodeScanning.getClient(options)
+    }
     var completed by remember { mutableStateOf(false) }
 
     DisposableEffect(Unit) {
@@ -577,6 +582,19 @@ fun BarcodeQuestView(
                                                     val raw = b.rawValue
                                                     if (expectedBarcode == null || raw == expectedBarcode) {
                                                         completed = true
+                                                        
+                                                        try {
+                                                            val vibrator = ctx.getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+                                                            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O) {
+                                                                vibrator?.vibrate(android.os.VibrationEffect.createOneShot(120, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                                                            } else {
+                                                                @Suppress("DEPRECATION")
+                                                                vibrator?.vibrate(120)
+                                                            }
+                                                        } catch (e: Exception) {
+                                                            e.printStackTrace()
+                                                        }
+
                                                         onCompleted()
                                                         break
                                                     }
