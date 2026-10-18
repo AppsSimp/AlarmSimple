@@ -110,7 +110,7 @@ fun MainHomeScreen(
             state = pagerState,
             modifier = Modifier
                 .fillMaxSize()
-                .padding(padding)
+                .padding(bottom = padding.calculateBottomPadding())
         ) { page ->
             when (page) {
                 0 -> {

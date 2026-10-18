@@ -58,6 +58,7 @@ fun AlarmListScreen(
     val alarms by viewModel.alarms.collectAsState(initial = emptyList())
     val selectedIds by viewModel.selectedAlarmIds.collectAsState()
     val isSelectionMode = selectedIds.isNotEmpty()
+    val testRingButtonsEnabled by viewModel.testRingButtonsEnabled.collectAsState(initial = false)
 
     val coachMarksShown by viewModel.coachMarksShown.collectAsState(initial = true)
     var currentCoachStep by remember { mutableIntStateOf(0) } // 0: off, 1: Sleep card, 2: Help icon, 3: Add button
@@ -381,19 +382,22 @@ fun AlarmListScreen(
                             }
                         )
 
+                        val isSwipingAlarm = dismissState.targetValue != SwipeToDismissBoxValue.Settled || dismissState.progress > 0.05f
                         SwipeToDismissBox(
                             state = dismissState,
                             enableDismissFromStartToEnd = false,
                             backgroundContent = {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .clip(RoundedCornerShape(20.dp))
-                                        .background(Color(0xFFE11D48))
-                                        .padding(horizontal = 24.dp),
-                                    contentAlignment = Alignment.CenterEnd
-                                ) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Удалить", tint = Color.White)
+                                if (isSwipingAlarm) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(RoundedCornerShape(20.dp))
+                                            .background(Color(0xFFE11D48))
+                                            .padding(horizontal = 24.dp),
+                                        contentAlignment = Alignment.CenterEnd
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Удалить", tint = Color.White)
+                                    }
                                 }
                             }
                         ) {
@@ -428,6 +432,17 @@ fun AlarmListScreen(
                                         context.startService(intent)
                                     }
                                     onOpenSleepTracking()
+                                },
+                                showTestRingButton = testRingButtonsEnabled,
+                                onTriggerNow = {
+                                    val intent = Intent(context, com.appssimple.alarmsimple.service.AlarmFiringService::class.java).apply {
+                                        putExtra(com.appssimple.alarmsimple.service.AlarmFiringService.EXTRA_ALARM_ID, alarm.id)
+                                    }
+                                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                                        context.startForegroundService(intent)
+                                    } else {
+                                        context.startService(intent)
+                                    }
                                 }
                             )
                         }
@@ -644,7 +659,9 @@ fun AlarmItemCard(
     onLongClick: () -> Unit,
     onClick: () -> Unit,
     onToggleActive: (Boolean) -> Unit,
-    onStartSleepForAlarm: () -> Unit = {}
+    onStartSleepForAlarm: () -> Unit = {},
+    showTestRingButton: Boolean = false,
+    onTriggerNow: () -> Unit = {}
 ) {
     val isDuration = alarm.mode == AlarmMode.DURATION.name
 
@@ -810,6 +827,38 @@ fun AlarmItemCard(
                         Icon(Icons.Default.Bedtime, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("Спать", fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                    }
+                }
+            }
+
+            // Кнопка разработчика / теста "Зазвонить сейчас"
+            if (showTestRingButton && !isSelectionMode) {
+                Spacer(Modifier.height(10.dp))
+                HorizontalDivider(color = Color(0xFFE11D48).copy(alpha = 0.3f))
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Режим разработчика:",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = Color(0xFFF43F5E),
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Button(
+                        onClick = onTriggerNow,
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFFE11D48),
+                            contentColor = Color.White
+                        ),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp)
+                    ) {
+                        Icon(Icons.Default.Alarm, contentDescription = null, modifier = Modifier.size(15.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Зазвонить сейчас", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                     }
                 }
             }

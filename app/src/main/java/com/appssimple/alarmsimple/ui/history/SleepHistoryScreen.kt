@@ -169,19 +169,22 @@ fun SleepHistoryScreen(
                             }
                         )
 
+                        val isSwiping = dismissState.targetValue != SwipeToDismissBoxValue.Settled || dismissState.progress > 0.05f
                         SwipeToDismissBox(
                             state = dismissState,
                             enableDismissFromStartToEnd = false,
                             backgroundContent = {
-                                Box(
-                                    modifier = Modifier
-                                        .fillMaxSize()
-                                        .clip(RoundedCornerShape(18.dp))
-                                        .background(Color(0xFFE11D48))
-                                        .padding(horizontal = 24.dp),
-                                    contentAlignment = Alignment.CenterEnd
-                                ) {
-                                    Icon(Icons.Default.Delete, contentDescription = "Удалить", tint = Color.White)
+                                if (isSwiping) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxSize()
+                                            .clip(RoundedCornerShape(18.dp))
+                                            .background(Color(0xFFE11D48))
+                                            .padding(horizontal = 24.dp),
+                                        contentAlignment = Alignment.CenterEnd
+                                    ) {
+                                        Icon(Icons.Default.Delete, contentDescription = "Удалить", tint = Color.White)
+                                    }
                                 }
                             }
                         ) {
