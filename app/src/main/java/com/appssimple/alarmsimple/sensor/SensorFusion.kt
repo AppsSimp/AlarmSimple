@@ -13,7 +13,12 @@ data class FusionEpochState(
     val timestampMs: Long,
     val phase: SleepPhase,
     val movementIntensity: Float,
+    val maxDelta: Float,
+    val isUserMoving: Boolean,
     val dominantAudioClass: AudioClass?,
+    val noiseFloorRms: Float,
+    val consecutiveStillEpochs: Int,
+    val consecutiveQuietEpochs: Int,
     val isSleepOnsetDetected: Boolean,
     val isLightPhaseForWakeUp: Boolean
 )
@@ -44,7 +49,6 @@ class SensorFusion @Inject constructor(
     private val audioLock = Any()
 
     // Consecutive quiet and still epochs counter (each epoch is 30 sec)
-    // 20 epochs = 10 minutes quiet, 10 epochs = 5 minutes still
     private var consecutiveQuietEpochs = 0
     private var consecutiveStillEpochs = 0
 
@@ -102,24 +106,41 @@ class SensorFusion @Inject constructor(
         }
 
         // 2. Track Sleep Onset
-        val isQuiet = dominantAudio in listOf(AudioClass.SILENCE, AudioClass.AMBIENT, AudioClass.BREATHING)
+        // Quiet audio: silence, ambient room hum, steady breathing or snoring
+        val isQuiet = dominantAudio in listOf(AudioClass.SILENCE, AudioClass.AMBIENT, AudioClass.BREATHING, AudioClass.SNORE)
         if (isQuiet) {
             consecutiveQuietEpochs++
         } else if (dominantAudio == AudioClass.SPEECH) {
+            // Talking on phone or watching video in bed resets quiet
             consecutiveQuietEpochs = 0
+        } else {
+            // Loud non-snore noise decreses quiet count
+            consecutiveQuietEpochs = kotlin.math.max(0, consecutiveQuietEpochs - 2)
         }
 
-        if (!movement.isUserMoving && movement.movementIntensity < 0.15f) {
+        // Movement / Tossing and Turning:
+        // When tossing and turning in bed, movementIntensity is typically between 0.08 and 0.40.
+        // If movement is detected, consecutiveStillEpochs MUST be reset to 0 (or heavily penalized),
+        // preventing tossing/turning from falsely qualifying as sleep onset!
+        val isStill = !movement.isUserMoving && movement.movementIntensity < 0.08f && movement.maxDelta < 0.15f
+        val isTossingOrMoving = movement.isUserMoving || movement.movementIntensity >= 0.12f || movement.maxDelta >= 0.25f
+
+        if (isStill) {
             consecutiveStillEpochs++
-        } else if (movement.isUserMoving) {
+        } else if (isTossingOrMoving) {
+            // Active movement or turning in bed resets stillness completely
             consecutiveStillEpochs = 0
+        } else {
+            // Very minor bed jitter / settling down (0.08 .. 0.12)
+            consecutiveStillEpochs = kotlin.math.max(0, consecutiveStillEpochs - 1)
         }
 
         var onsetDetectedThisEpoch = false
         if (sleepOnsetTimeMs == null) {
-            // User fell asleep: 10 min quiet (20 epochs) AND 5 min still (10 epochs)
-            // Or 15 min still regardless of quiet (handles sleeping with TV on)
-            if ((consecutiveQuietEpochs >= 20 && consecutiveStillEpochs >= 10) || consecutiveStillEpochs >= 30) {
+            // User fell asleep:
+            // 1) 10 min quiet (20 epochs) AND at least 8 min (16 epochs) continuous stillness
+            // 2) OR 18 min (36 epochs) of continuous stillness regardless of audio (e.g. TV / music playing)
+            if ((consecutiveQuietEpochs >= 20 && consecutiveStillEpochs >= 16) || consecutiveStillEpochs >= 36) {
                 sleepOnsetTimeMs = now - (consecutiveStillEpochs * 30_000L)
                 onsetDetectedThisEpoch = true
             }
@@ -136,7 +157,12 @@ class SensorFusion @Inject constructor(
                 timestampMs = now,
                 phase = phase,
                 movementIntensity = movement.movementIntensity,
+                maxDelta = movement.maxDelta,
+                isUserMoving = movement.isUserMoving,
                 dominantAudioClass = dominantAudio,
+                noiseFloorRms = audioAnalyzer.noiseFloorRms,
+                consecutiveStillEpochs = consecutiveStillEpochs,
+                consecutiveQuietEpochs = consecutiveQuietEpochs,
                 isSleepOnsetDetected = onsetDetectedThisEpoch,
                 isLightPhaseForWakeUp = isLightForWake
             )

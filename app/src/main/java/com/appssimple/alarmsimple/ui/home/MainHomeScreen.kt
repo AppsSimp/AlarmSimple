@@ -108,6 +108,7 @@ fun MainHomeScreen(
     ) { padding ->
         HorizontalPager(
             state = pagerState,
+            beyondViewportPageCount = 1,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(bottom = padding.calculateBottomPadding())

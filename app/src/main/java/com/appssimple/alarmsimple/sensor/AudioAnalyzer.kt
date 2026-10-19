@@ -79,7 +79,8 @@ class AudioAnalyzer @Inject constructor(
     private val maxSnippetsPerNight = 20
 
     // Dynamic noise floor tracking (Leaky minimum follower)
-    private var noiseFloorRms = 150f
+    var noiseFloorRms = 150f
+        private set
 
     companion object {
         const val BUFFER_SIZE_SAMPLES = 2048 // ~256ms per analysis frame
