@@ -29,10 +29,14 @@ class UserPreferences @Inject constructor(
         val DEFAULT_SIREN_ENABLED = booleanPreferencesKey("default_siren_enabled")
         val BACKUP_SYSTEM_ALARM_ENABLED = booleanPreferencesKey("backup_system_alarm_enabled")
         val TEST_RING_BUTTONS_ENABLED = booleanPreferencesKey("test_ring_buttons_enabled")
+        val DEBUG_SLEEP_LOGGING_ENABLED = booleanPreferencesKey("debug_sleep_logging_enabled")
     }
     
     val testRingButtonsEnabled: Flow<Boolean> = context.dataStore.data
         .map { it[TEST_RING_BUTTONS_ENABLED] ?: false }
+
+    val debugSleepLoggingEnabled: Flow<Boolean> = context.dataStore.data
+        .map { it[DEBUG_SLEEP_LOGGING_ENABLED] ?: false }
 
     val onboardingCompleted: Flow<Boolean> = context.dataStore.data
         .map { it[ONBOARDING_COMPLETED] ?: false }
@@ -93,5 +97,9 @@ class UserPreferences @Inject constructor(
 
     suspend fun setTestRingButtonsEnabled(enabled: Boolean) {
         context.dataStore.edit { it[TEST_RING_BUTTONS_ENABLED] = enabled }
+    }
+
+    suspend fun setDebugSleepLoggingEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[DEBUG_SLEEP_LOGGING_ENABLED] = enabled }
     }
 }

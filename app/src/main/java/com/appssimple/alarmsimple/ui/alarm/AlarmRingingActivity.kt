@@ -283,10 +283,14 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
     }
 
     private fun dismissAndFinish() {
-        val intent = Intent(this, AlarmFiringService::class.java).apply {
+        val alarmId = intent.getLongExtra(AlarmFiringService.EXTRA_ALARM_ID, -1L)
+        val dismissIntent = Intent(this, AlarmFiringService::class.java).apply {
             action = AlarmFiringService.ACTION_DISMISS
+            if (alarmId > 0) {
+                putExtra(AlarmFiringService.EXTRA_ALARM_ID, alarmId)
+            }
         }
-        startService(intent)
+        startService(dismissIntent)
         finish()
     }
 

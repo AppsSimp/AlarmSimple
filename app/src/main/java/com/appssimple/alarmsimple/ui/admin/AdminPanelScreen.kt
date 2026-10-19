@@ -126,6 +126,77 @@ fun AdminPanelScreen(
                     }
                 }
 
+                // Детальное логирование сенсоров сна (ночной лог для калибровки)
+                val debugSleepLoggingEnabled by viewModel.debugSleepLoggingEnabled.collectAsState(initial = false)
+                val logFileSize by viewModel.logFileSize.collectAsState()
+
+                ModernCard {
+                    Column {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    "Ночной лог сенсоров сна (CSV)",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    "Каждые 30 секунд записывает ускорение, шевеления, шум (RMS), фазу и детекцию засыпания. Для сравнения со смарт-часами.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Switch(
+                                checked = debugSleepLoggingEnabled,
+                                onCheckedChange = { viewModel.toggleDebugSleepLogging(it) }
+                            )
+                        }
+
+                        Spacer(Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                "Размер лог-файла: $logFileSize",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Button(
+                                onClick = { viewModel.exportSleepLog(context) },
+                                modifier = Modifier.weight(1f),
+                                colors = ButtonDefaults.buttonColors(containerColor = BrandSecondary),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Поделиться логом", fontWeight = FontWeight.Bold)
+                            }
+
+                            OutlinedButton(
+                                onClick = { viewModel.clearSleepLog() },
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Text("Очистить")
+                            }
+                        }
+                    }
+                }
+
                 // Тестовые данные истории сна
                 ModernCard {
                     Column {
@@ -177,10 +248,56 @@ class AdminViewModel @Inject constructor(
     private val sleepEpochDao: SleepEpochDao,
     private val audioSnippetDao: AudioSnippetDao,
     private val alarmScheduler: AlarmScheduler,
-    private val userPreferences: com.appssimple.alarmsimple.data.preferences.UserPreferences
+    private val userPreferences: com.appssimple.alarmsimple.data.preferences.UserPreferences,
+    private val sleepDebugLogger: com.appssimple.alarmsimple.sensor.SleepDebugLogger
 ) : ViewModel() {
 
     val testRingButtonsEnabled = userPreferences.testRingButtonsEnabled
+    val debugSleepLoggingEnabled = userPreferences.debugSleepLoggingEnabled
+
+    private val _logFileSize = kotlinx.coroutines.flow.MutableStateFlow(sleepDebugLogger.getLogFileSizeFormatted())
+    val logFileSize: kotlinx.coroutines.flow.StateFlow<String> = _logFileSize
+
+    fun refreshLogSize() {
+        _logFileSize.value = sleepDebugLogger.getLogFileSizeFormatted()
+    }
+
+    fun toggleDebugSleepLogging(enabled: Boolean) {
+        viewModelScope.launch {
+            userPreferences.setDebugSleepLoggingEnabled(enabled)
+            _messageEvent.emit(if (enabled) "Детальный лог сенсоров сна ВКЛЮЧЕН (пишется за всю ночь)" else "Детальный лог сенсоров сна ВЫКЛЮЧЕН")
+            refreshLogSize()
+        }
+    }
+
+    fun exportSleepLog(context: Context) {
+        viewModelScope.launch {
+            val uri = sleepDebugLogger.getShareUri()
+            if (uri == null) {
+                _messageEvent.emit("Лог пуст или ещё не создан. Запустите отслеживание сна!")
+                return@launch
+            }
+            try {
+                val intent = Intent(Intent.ACTION_SEND).apply {
+                    type = "text/csv"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_SUBJECT, "Sleep Sensor Debug Log (AlarmSimple)")
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                context.startActivity(Intent.createChooser(intent, "Поделиться логом сна"))
+            } catch (e: Exception) {
+                _messageEvent.emit("Не удалось экспортировать файл: ${e.message}")
+            }
+        }
+    }
+
+    fun clearSleepLog() {
+        viewModelScope.launch {
+            sleepDebugLogger.clearLog()
+            refreshLogSize()
+            _messageEvent.emit("Лог сенсоров сна очищен")
+        }
+    }
 
     private val _messageEvent = MutableSharedFlow<String>()
     val messageEvent = _messageEvent.asSharedFlow()

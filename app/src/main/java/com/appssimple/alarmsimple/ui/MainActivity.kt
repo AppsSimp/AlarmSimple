@@ -88,12 +88,14 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                var ready by remember { mutableStateOf(false) }
-                var onboardingCompleted by remember { mutableStateOf(false) }
+                var ready by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+                var onboardingCompleted by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
 
                 LaunchedEffect(Unit) {
-                    onboardingCompleted = userPreferences.onboardingCompleted.first()
-                    ready = true
+                    if (!ready) {
+                        onboardingCompleted = userPreferences.onboardingCompleted.first()
+                        ready = true
+                    }
                 }
 
                 Surface(

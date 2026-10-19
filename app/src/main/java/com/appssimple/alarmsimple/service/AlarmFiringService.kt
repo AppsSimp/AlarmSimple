@@ -278,37 +278,45 @@ class AlarmFiringService : Service() {
             startService(stopTrackingIntent)
         }
 
-        // Handle alarm recurrence or deactivation
+        // Handle alarm recurrence or deactivation synchronously before stopSelf
         if (firingAlarmId > 0) {
             serviceScope.launch {
-                val alarm = alarmDao.getAlarmById(firingAlarmId)
-                if (alarm != null) {
-                    val repeatDays = runCatching {
-                        val arr = org.json.JSONArray(alarm.repeatDays)
-                        (0 until arr.length()).map { arr.getInt(it) }.toSet()
-                    }.getOrDefault(emptySet())
+                try {
+                    val alarm = alarmDao.getAlarmById(firingAlarmId)
+                    if (alarm != null) {
+                        val repeatDays = runCatching {
+                            val arr = org.json.JSONArray(alarm.repeatDays)
+                            (0 until arr.length()).map { arr.getInt(it) }.toSet()
+                        }.getOrDefault(emptySet())
 
-                    if (repeatDays.isNotEmpty() && alarm.targetTimeMs != null) {
-                        val cal = java.util.Calendar.getInstance().apply { timeInMillis = alarm.targetTimeMs }
-                        val nextTrigger = alarmScheduler.calculateNextTriggerTime(
-                            hour = cal.get(java.util.Calendar.HOUR_OF_DAY),
-                            minute = cal.get(java.util.Calendar.MINUTE),
-                            repeatDays = repeatDays,
-                            repeatIntervalWeeks = alarm.repeatIntervalWeeks
-                        )
-                        alarmDao.updateAlarm(alarm.copy(targetTimeMs = nextTrigger, isActive = true))
-                        alarmScheduler.scheduleAlarm(nextTrigger, alarm.id)
-                    } else if (repeatDays.isEmpty()) {
-                        // Разовый будильник после срабатывания полностью деактивируется
-                        alarmScheduler.cancelAlarm(alarm.id)
-                        alarmDao.setAlarmActive(alarm.id, false)
+                        if (repeatDays.isNotEmpty() && alarm.targetTimeMs != null) {
+                            val cal = java.util.Calendar.getInstance().apply { timeInMillis = alarm.targetTimeMs }
+                            val nextTrigger = alarmScheduler.calculateNextTriggerTime(
+                                hour = cal.get(java.util.Calendar.HOUR_OF_DAY),
+                                minute = cal.get(java.util.Calendar.MINUTE),
+                                repeatDays = repeatDays,
+                                repeatIntervalWeeks = alarm.repeatIntervalWeeks
+                            )
+                            alarmDao.updateAlarm(alarm.copy(targetTimeMs = nextTrigger, isActive = true))
+                            alarmScheduler.scheduleAlarm(nextTrigger, alarm.id)
+                        } else if (repeatDays.isEmpty()) {
+                            // Разовый будильник после срабатывания полностью деактивируется
+                            alarmScheduler.cancelAlarm(alarm.id)
+                            alarmDao.updateAlarm(alarm.copy(isActive = false))
+                            alarmDao.setAlarmActive(alarm.id, false)
+                        }
                     }
+                } catch (e: Exception) {
+                    e.printStackTrace()
+                } finally {
+                    stopForeground(STOP_FOREGROUND_REMOVE)
+                    stopSelf()
                 }
             }
+        } else {
+            stopForeground(STOP_FOREGROUND_REMOVE)
+            stopSelf()
         }
-
-        stopForeground(STOP_FOREGROUND_REMOVE)
-        stopSelf()
     }
 
     private fun enforceMaxVolume() {

@@ -45,6 +45,7 @@ class SleepTrackingService : Service() {
     @Inject lateinit var audioSnippetDao: AudioSnippetDao
     @Inject lateinit var alarmDao: AlarmDao
     @Inject lateinit var alarmScheduler: AlarmScheduler
+    @Inject lateinit var sleepDebugLogger: com.appssimple.alarmsimple.sensor.SleepDebugLogger
 
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var wakeLock: PowerManager.WakeLock? = null
@@ -178,6 +179,13 @@ class SleepTrackingService : Service() {
                 movementIntensity = epochState.movementIntensity,
                 audioEvent = epochState.dominantAudioClass?.name
             )
+        )
+
+        // Overnight debug logging to CSV if enabled in developer settings
+        sleepDebugLogger.logEpoch(
+            sessionId = currentSessionId,
+            epochState = epochState,
+            sleepOnsetMs = sleepOnsetMs
         )
 
         if (epochState.dominantAudioClass == com.appssimple.alarmsimple.domain.model.AudioClass.SNORE) {
