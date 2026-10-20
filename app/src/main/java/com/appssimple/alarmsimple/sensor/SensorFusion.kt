@@ -96,6 +96,29 @@ class SensorFusion @Inject constructor(
                     processCombinedEpoch(movementResult)
                 }
             }
+
+            // Fallback watchdog: if accelerometer callbacks stall or sleep (e.g. phone completely stationary on table),
+            // emit a motionless epoch every 30 seconds so night tracking never stalls
+            launch {
+                while (isActive) {
+                    delay(30_000L)
+                    val now = System.currentTimeMillis()
+                    val lastSampleTime = accelerometerCollector.lastSampleTimeMs
+                    // If no samples arrived for over 35 seconds, synthesize a quiet/still epoch
+                    if (now - lastSampleTime >= 35_000L) {
+                        processCombinedEpoch(
+                            EpochMovementResult(
+                                timestampMs = now,
+                                movementIntensity = 0f,
+                                maxDelta = 0f,
+                                standardDeviation = 0f,
+                                movementCount = 0,
+                                isUserMoving = false
+                            )
+                        )
+                    }
+                }
+            }
         }
     }
 
