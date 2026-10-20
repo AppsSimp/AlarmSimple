@@ -182,10 +182,11 @@ class SleepTrackingService : Service() {
         )
 
         // Overnight debug logging to CSV if enabled in developer settings
+        // Uses epochState.sleepOnsetMs so the onset timestamp is logged immediately on the epoch it was detected!
         sleepDebugLogger.logEpoch(
             sessionId = currentSessionId,
             epochState = epochState,
-            sleepOnsetMs = sleepOnsetMs
+            sleepOnsetMs = epochState.sleepOnsetMs ?: sleepOnsetMs
         )
 
         if (epochState.dominantAudioClass == com.appssimple.alarmsimple.domain.model.AudioClass.SNORE) {

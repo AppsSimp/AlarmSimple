@@ -175,6 +175,55 @@ fun SettingsScreen(
                         }
 
                         val context = androidx.compose.ui.platform.LocalContext.current
+                        val powerManager = context.getSystemService(android.content.Context.POWER_SERVICE) as? android.os.PowerManager
+                        var isIgnoringBatteryOptimizations by remember {
+                            mutableStateOf(
+                                if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                                    powerManager?.isIgnoringBatteryOptimizations(context.packageName) ?: false
+                                } else true
+                            )
+                        }
+
+                        HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Работа в фоне (Doze Mode)", fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    if (isIgnoringBatteryOptimizations) "Оптимизация батареи отключена. Система Android не усыпит трекинг сна ночью."
+                                    else "Критично для ночного трекинга сна! Без этого Android усыпляет датчики через 30 минут.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = if (isIgnoringBatteryOptimizations) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.error
+                                )
+                            }
+                            if (!isIgnoringBatteryOptimizations) {
+                                Button(
+                                    onClick = {
+                                        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                                            try {
+                                                val intent = android.content.Intent(android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                                                    data = android.net.Uri.parse("package:${context.packageName}")
+                                                }
+                                                context.startActivity(intent)
+                                            } catch (e: Exception) {
+                                                val fallbackIntent = android.content.Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+                                                context.startActivity(fallbackIntent)
+                                            }
+                                        }
+                                    },
+                                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                                ) {
+                                    Text("Отключить", fontSize = 12.sp)
+                                }
+                            } else {
+                                Text("Отключено", color = MaterialTheme.colorScheme.primary, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
                         var hasOverlayPermission by remember {
                             mutableStateOf(
                                 if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {

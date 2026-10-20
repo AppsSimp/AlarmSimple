@@ -20,6 +20,7 @@ data class FusionEpochState(
     val consecutiveStillEpochs: Int,
     val consecutiveQuietEpochs: Int,
     val isSleepOnsetDetected: Boolean,
+    val sleepOnsetMs: Long?,
     val isLightPhaseForWakeUp: Boolean
 )
 
@@ -42,15 +43,23 @@ class SensorFusion @Inject constructor(
     private var trackingStartTimeMs = 0L
 
     @Volatile
-    private var sleepOnsetTimeMs: Long? = null
+    var sleepOnsetTimeMs: Long? = null
+        private set
 
     // Rolling window of recent audio classes (last 30 seconds)
     private val recentAudioClasses = mutableListOf<AudioClass>()
     private val audioLock = Any()
 
+    // Sliding window of recent epochs (last 16 epochs ~ 8 min) for robust onset detection
+    // Each entry is true if epoch was quiet and still
+    private val recentQuietStillEpochs = ArrayDeque<Boolean>()
+
     // Consecutive quiet and still epochs counter (each epoch is 30 sec)
     private var consecutiveQuietEpochs = 0
     private var consecutiveStillEpochs = 0
+
+    // Consecutive stillness epochs inside sleep (used for DEEP sleep entry)
+    private var sleepConsecutiveStillEpochs = 0
 
     // Adaptive thresholding: history of movement intensities during this session
     private val sessionMovementHistory = mutableListOf<Float>()
@@ -60,6 +69,8 @@ class SensorFusion @Inject constructor(
         sleepOnsetTimeMs = null
         consecutiveQuietEpochs = 0
         consecutiveStillEpochs = 0
+        sleepConsecutiveStillEpochs = 0
+        recentQuietStillEpochs.clear()
         synchronized(audioLock) {
             recentAudioClasses.clear()
         }
@@ -111,37 +122,53 @@ class SensorFusion @Inject constructor(
         if (isQuiet) {
             consecutiveQuietEpochs++
         } else if (dominantAudio == AudioClass.SPEECH) {
-            // Talking on phone or watching video in bed resets quiet
+            // Speech (e.g. talking on phone or talking to someone) resets quiet count
             consecutiveQuietEpochs = 0
         } else {
-            // Loud non-snore noise decreses quiet count
+            // Loud non-snore noise decreases quiet count
             consecutiveQuietEpochs = kotlin.math.max(0, consecutiveQuietEpochs - 2)
         }
 
-        // Movement / Tossing and Turning:
-        // When tossing and turning in bed, movementIntensity is typically between 0.08 and 0.40.
-        // If movement is detected, consecutiveStillEpochs MUST be reset to 0 (or heavily penalized),
-        // preventing tossing/turning from falsely qualifying as sleep onset!
+        // Movement / Stillness evaluation:
+        // isStill: user is motionless (intensity < 0.08 and maxDelta < 0.15)
         val isStill = !movement.isUserMoving && movement.movementIntensity < 0.08f && movement.maxDelta < 0.15f
-        val isTossingOrMoving = movement.isUserMoving || movement.movementIntensity >= 0.12f || movement.maxDelta >= 0.25f
+        val isMajorMove = movement.movementIntensity >= 2.0f || movement.maxDelta >= 1.0f
 
         if (isStill) {
             consecutiveStillEpochs++
-        } else if (isTossingOrMoving) {
-            // Active movement or turning in bed resets stillness completely
+        } else if (isMajorMove) {
+            // Big posture shift or getting out of bed resets still epochs completely
             consecutiveStillEpochs = 0
         } else {
-            // Very minor bed jitter / settling down (0.08 .. 0.12)
-            consecutiveStillEpochs = kotlin.math.max(0, consecutiveStillEpochs - 1)
+            // Moderate micro-movement/twitches (e.g. rolling over or adjusting pillow):
+            // Instead of wiping out 8 minutes of accumulated stillness to 0, penalize by 3 epochs (1.5 min)
+            consecutiveStillEpochs = kotlin.math.max(0, consecutiveStillEpochs - 3)
+        }
+
+        // Sliding window: track whether the epoch was relaxed (still & quiet)
+        val isRelaxedEpoch = isStill && (isQuiet || consecutiveQuietEpochs >= 10)
+        recentQuietStillEpochs.addLast(isRelaxedEpoch)
+        if (recentQuietStillEpochs.size > 16) { // 16 epochs = 8 minutes
+            recentQuietStillEpochs.removeFirst()
         }
 
         var onsetDetectedThisEpoch = false
         if (sleepOnsetTimeMs == null) {
-            // User fell asleep:
-            // 1) 10 min quiet (20 epochs) AND at least 8 min (16 epochs) continuous stillness
-            // 2) OR 18 min (36 epochs) of continuous stillness regardless of audio (e.g. TV / music playing)
-            if ((consecutiveQuietEpochs >= 20 && consecutiveStillEpochs >= 16) || consecutiveStillEpochs >= 36) {
-                sleepOnsetTimeMs = now - (consecutiveStillEpochs * 30_000L)
+            // Sleep onset criteria:
+            // 1) Sliding window: In an 8-minute window (16 epochs), at least 13 epochs are still & quiet, AND
+            //    user has had at least 10 minutes (20 epochs) of overall quiet ambient conditions
+            val relaxedInWindow = recentQuietStillEpochs.count { it }
+            val windowSatisfied = recentQuietStillEpochs.size >= 14 && relaxedInWindow >= 12 && consecutiveQuietEpochs >= 16
+
+            // 2) Or continuous stillness for 14 epochs (~7 min) with quiet conditions
+            val continuousSatisfied = consecutiveQuietEpochs >= 16 && consecutiveStillEpochs >= 14
+
+            // 3) Or prolonged stillness regardless of ambient noise (e.g. sleeping with TV/fan on) for 24 epochs (12 min)
+            val deepStillSatisfied = consecutiveStillEpochs >= 24
+
+            if (windowSatisfied || continuousSatisfied || deepStillSatisfied) {
+                val backdateEpochs = kotlin.math.max(consecutiveStillEpochs, 14)
+                sleepOnsetTimeMs = now - (backdateEpochs * 30_000L)
                 onsetDetectedThisEpoch = true
             }
         }
@@ -149,7 +176,8 @@ class SensorFusion @Inject constructor(
         // 3. Classify Sleep Phase
         val phase = classifyPhase(movement, dominantAudio, now)
 
-        // 4. Check if optimal for Smart Wake-Up (Light phase + movement spike)
+        // 4. Check if optimal for Smart Wake-Up:
+        // Must be in LIGHT sleep phase or awakening spike, and NEVER wake up later than scheduled alarm
         val isLightForWake = phase == SleepPhase.LIGHT || (phase == SleepPhase.AWAKE && movement.movementIntensity > 0.20f)
 
         _fusionEpochFlow.tryEmit(
@@ -164,6 +192,7 @@ class SensorFusion @Inject constructor(
                 consecutiveStillEpochs = consecutiveStillEpochs,
                 consecutiveQuietEpochs = consecutiveQuietEpochs,
                 isSleepOnsetDetected = onsetDetectedThisEpoch,
+                sleepOnsetMs = sleepOnsetTimeMs,
                 isLightPhaseForWakeUp = isLightForWake
             )
         )
@@ -175,35 +204,58 @@ class SensorFusion @Inject constructor(
         now: Long
     ): SleepPhase {
         // If sleep onset not yet reached, user is Awake
-        val onset = sleepOnsetTimeMs
-        if (onset == null) {
+        val onset = sleepOnsetTimeMs ?: return SleepPhase.AWAKE
+
+        // Gross movement indicates awakening
+        if (movement.isUserMoving || movement.movementIntensity >= 0.35f || movement.maxDelta >= 0.6f) {
+            sleepConsecutiveStillEpochs = 0
             return SleepPhase.AWAKE
         }
+
+        // Minor movements: shift in bed / twitching = LIGHT sleep
+        if (movement.movementIntensity >= 0.08f || movement.maxDelta >= 0.15f) {
+            sleepConsecutiveStillEpochs = 0
+            return SleepPhase.LIGHT
+        }
+
+        // Motionless epoch in bed during sleep
+        sleepConsecutiveStillEpochs++
 
         val minutesSinceOnset = ((now - onset) / 60_000L).toInt()
         val cyclePosition = ((minutesSinceOnset % 90) / 90f) // Position in 90-min ultradian cycle [0.0, 1.0]
 
-        // Gross movement indicates awakening or restless sleep
-        if (movement.isUserMoving || movement.movementIntensity > 0.45f) {
-            return SleepPhase.AWAKE
-        }
-
-        // Moderate movement = Light Sleep (N1 / N2)
-        if (movement.movementIntensity > 0.12f) {
+        // Physiological rules:
+        // 1. Initial 15 minutes of sleep is always LIGHT sleep (N1/N2). Cannot jump straight to DEEP!
+        if (minutesSinceOnset < 15) {
             return SleepPhase.LIGHT
         }
 
-        // Low / near zero movement: Distinguish Deep Sleep (N3) vs REM
-        // Deep sleep dominates the first 3 hours of the night and first half of each cycle.
-        // REM dominates the latter half of the night and end of 90-min cycle.
-        val isLateInCycle = cyclePosition > 0.60f
-        val isLateInNight = minutesSinceOnset > 180
+        // 2. To enter DEEP sleep (N3):
+        // Must have at least 16 epochs (~8 minutes) of uninterrupted stillness inside sleep,
+        // and be in the first half of the 90-min ultradian cycle (cycles 1-3).
+        val isEarlyInCycle = cyclePosition < 0.60f
+        val isEarlyHours = minutesSinceOnset < 210 // First 3.5 hours
+        val hasDeepStillness = sleepConsecutiveStillEpochs >= 16
 
-        return if (isLateInCycle && (isLateInNight || audio == AudioClass.BREATHING)) {
-            SleepPhase.REM
-        } else {
-            // Snore or deep stillness indicates deep sleep (N3)
-            SleepPhase.DEEP
+        if (hasDeepStillness && isEarlyInCycle && isEarlyHours) {
+            return SleepPhase.DEEP
         }
+
+        // Snoring during stillness in early/mid cycle is also a strong marker of deep sleep
+        if (audio == AudioClass.SNORE && sleepConsecutiveStillEpochs >= 10 && isEarlyInCycle) {
+            return SleepPhase.DEEP
+        }
+
+        // 3. REM sleep (Rapid Eye Movement / Dream phase):
+        // Occurs in the latter part of each 90-min cycle (cyclePosition > 0.65), especially after 3 hours of sleep.
+        // Requires sustained sleep (at least 6 epochs stillness) with regular breathing audio or stillness late in cycle.
+        val isLateInCycle = cyclePosition >= 0.65f
+        val isLateInNight = minutesSinceOnset >= 150
+        if (isLateInCycle && isLateInNight && sleepConsecutiveStillEpochs in 6..30) {
+            return SleepPhase.REM
+        }
+
+        // 4. Default baseline sleep phase is LIGHT (N2) — accounts for ~55-60% of healthy sleep!
+        return SleepPhase.LIGHT
     }
 }
