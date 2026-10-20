@@ -151,7 +151,8 @@ class AccelerometerCollector @Inject constructor(
         }
 
         val stdDev = calculateStdDev(magnitudes)
-        val isUserMoving = movementIntensity > WAKE_MOVEMENT_THRESHOLD || maxDelta > 0.6f
+        // User movement threshold (calibrated for in-bed tossing & shifting)
+        val isUserMoving = movementIntensity >= 0.10f || maxDelta >= 0.20f
 
         return EpochMovementResult(
             timestampMs = epochTimestamp,

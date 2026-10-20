@@ -234,9 +234,17 @@ fun AlarmListScreen(
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     item {
-                        // Баннер ближайшего будильника
-                        val nextAlarmInfo = remember(alarms) {
-                            val now = System.currentTimeMillis()
+                        // Баннер ближайшего будильника (обновляется в реальном времени каждую секунду)
+                        var currentTimeMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
+                        LaunchedEffect(Unit) {
+                            while (true) {
+                                kotlinx.coroutines.delay(1000L)
+                                currentTimeMillis = System.currentTimeMillis()
+                            }
+                        }
+
+                        val nextAlarmInfo = remember(alarms, currentTimeMillis) {
+                            val now = currentTimeMillis
                             val activeAlarms = alarms.filter { it.isActive }
                             val upcomingTimes = activeAlarms.mapNotNull { alarm ->
                                 if (alarm.mode == AlarmMode.DURATION.name) {

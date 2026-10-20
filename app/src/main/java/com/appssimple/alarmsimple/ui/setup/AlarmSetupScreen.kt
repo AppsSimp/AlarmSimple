@@ -703,7 +703,7 @@ fun AlarmSetupScreen(
                                         contentAlignment = Alignment.Center
                                     ) {
                                         Text(
-                                            text = "±$window м",
+                                            text = "-$window м",
                                             fontSize = 13.sp,
                                             fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
                                             color = if (isSelected) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
