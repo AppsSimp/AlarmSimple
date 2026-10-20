@@ -71,6 +71,8 @@ import javax.inject.Inject
 class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
 
     @Inject lateinit var alarmDao: AlarmDao
+    @Inject lateinit var userPreferences: com.appssimple.alarmsimple.data.preferences.UserPreferences
+    private var mediaPlayerApplePay: android.media.MediaPlayer? = null
 
     private lateinit var audioManager: AudioManager
     private var nfcAdapter: NfcAdapter? = null
@@ -121,6 +123,8 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
             AlarmSimpleTheme {
                 val coroutineScope = rememberCoroutineScope()
                 var currentAlarm by remember { mutableStateOf<com.appssimple.alarmsimple.data.db.entity.AlarmEntity?>(null) }
+                val isFakeApplePayEnabled by userPreferences.fakeApplePayEnabled.collectAsState(initial = true)
+                var showApplePayOverlay by remember { mutableStateOf(false) }
 
                 LaunchedEffect(alarmId) {
                     if (alarmId != -1L) {
@@ -153,7 +157,12 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
 
                 LaunchedEffect(questSuccessTrigger.value) {
                     if (questSuccessTrigger.value) {
-                        dismissAndFinish()
+                        if (questTypeState.value == QuestType.NFC && isFakeApplePayEnabled) {
+                            playApplePayChime()
+                            showApplePayOverlay = true
+                        } else {
+                            dismissAndFinish()
+                        }
                     }
                 }
 
@@ -163,8 +172,9 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                     }
                 }
 
-                AlarmRingingScreenContent(
-                    isSiren = isSirenState.value,
+                Box(modifier = Modifier.fillMaxSize()) {
+                    AlarmRingingScreenContent(
+                        isSiren = isSirenState.value,
                     questType = questTypeState.value,
                     isQuestActive = isQuestActiveState.value,
                     expectedBarcode = expectedBarcode,
@@ -192,8 +202,18 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                         dismissAndFinish()
                     }
                 )
+
+                if (showApplePayOverlay) {
+                    FakeApplePaySuccessOverlay(
+                        onAnimationEnd = {
+                            showApplePayOverlay = false
+                            dismissAndFinish()
+                        }
+                    )
+                }
             }
         }
+    }
     }
 
     private fun configureLockScreenDisplay() {
@@ -294,9 +314,47 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
         finish()
     }
 
+    private fun playApplePayChime() {
+        try {
+            // Haptic vibration feedback (double tap feel)
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? android.os.VibratorManager
+                vm?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                getSystemService(Context.VIBRATOR_SERVICE) as? android.os.Vibrator
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                vibrator?.vibrate(android.os.VibrationEffect.createOneShot(120, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+            } else {
+                @Suppress("DEPRECATION")
+                vibrator?.vibrate(120)
+            }
+
+            // Play synthesized Apple Pay chime
+            mediaPlayerApplePay?.release()
+            mediaPlayerApplePay = android.media.MediaPlayer.create(this, com.appssimple.alarmsimple.R.raw.apple_pay_success)?.apply {
+                setAudioAttributes(
+                    android.media.AudioAttributes.Builder()
+                        .setUsage(android.media.AudioAttributes.USAGE_ALARM)
+                        .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                start()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     override fun onDestroy() {
         try {
             unregisterReceiver(sirenReceiver)
+        } catch (e: Exception) {}
+        try {
+            mediaPlayerApplePay?.stop()
+            mediaPlayerApplePay?.release()
+            mediaPlayerApplePay = null
         } catch (e: Exception) {}
         super.onDestroy()
     }

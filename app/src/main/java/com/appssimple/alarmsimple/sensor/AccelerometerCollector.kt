@@ -57,6 +57,8 @@ class AccelerometerCollector @Inject constructor(
 
     private var isCollecting = false
     private var epochStartTimeMs = 0L
+    @Volatile var lastSampleTimeMs = 0L
+        private set
 
     companion object {
         const val SAMPLES_DELAY_US = 200_000 // 5 Hz (200ms)
@@ -76,8 +78,7 @@ class AccelerometerCollector @Inject constructor(
         sensorManager.registerListener(
             this,
             accelerometer,
-            SAMPLES_DELAY_US,
-            MAX_REPORT_LATENCY_US
+            SAMPLES_DELAY_US
         )
     }
 
@@ -97,6 +98,7 @@ class AccelerometerCollector @Inject constructor(
         gravityX = alpha * gravityX + (1 - alpha) * event.values[0]
         gravityY = alpha * gravityY + (1 - alpha) * event.values[1]
         gravityZ = alpha * gravityZ + (1 - alpha) * event.values[2]
+        lastSampleTimeMs = System.currentTimeMillis()
 
         // 2. Linear acceleration without gravity
         val linearX = event.values[0] - gravityX

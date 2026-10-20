@@ -30,6 +30,7 @@ class UserPreferences @Inject constructor(
         val BACKUP_SYSTEM_ALARM_ENABLED = booleanPreferencesKey("backup_system_alarm_enabled")
         val TEST_RING_BUTTONS_ENABLED = booleanPreferencesKey("test_ring_buttons_enabled")
         val DEBUG_SLEEP_LOGGING_ENABLED = booleanPreferencesKey("debug_sleep_logging_enabled")
+        val FAKE_APPLE_PAY_ENABLED = booleanPreferencesKey("fake_apple_pay_enabled")
     }
     
     val testRingButtonsEnabled: Flow<Boolean> = context.dataStore.data
@@ -37,6 +38,9 @@ class UserPreferences @Inject constructor(
 
     val debugSleepLoggingEnabled: Flow<Boolean> = context.dataStore.data
         .map { it[DEBUG_SLEEP_LOGGING_ENABLED] ?: false }
+
+    val fakeApplePayEnabled: Flow<Boolean> = context.dataStore.data
+        .map { it[FAKE_APPLE_PAY_ENABLED] ?: true }
 
     val onboardingCompleted: Flow<Boolean> = context.dataStore.data
         .map { it[ONBOARDING_COMPLETED] ?: false }
@@ -101,5 +105,9 @@ class UserPreferences @Inject constructor(
 
     suspend fun setDebugSleepLoggingEnabled(enabled: Boolean) {
         context.dataStore.edit { it[DEBUG_SLEEP_LOGGING_ENABLED] = enabled }
+    }
+
+    suspend fun setFakeApplePayEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[FAKE_APPLE_PAY_ENABLED] = enabled }
     }
 }
