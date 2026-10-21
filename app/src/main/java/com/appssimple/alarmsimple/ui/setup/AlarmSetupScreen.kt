@@ -60,6 +60,7 @@ fun AlarmSetupScreen(
     viewModel: AlarmSetupViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
+    val savedQuests by viewModel.savedQuests.collectAsState()
     val context = LocalContext.current
     val snackbarHostState = remember { SnackbarHostState() }
 
@@ -104,21 +105,31 @@ fun AlarmSetupScreen(
 
     if (showNfcDialog) {
         NfcSetupDialog(
+            savedQuests = savedQuests,
             onDismiss = { showNfcDialog = false },
-            onTagScanned = { tagId ->
+            onTagScanned = { tagId, title ->
+                if (title != null) {
+                    viewModel.saveQuest("NFC", title, tagId)
+                }
                 viewModel.setQuestData(tagId)
                 showNfcDialog = false
-            }
+            },
+            onDeleteSavedQuest = { viewModel.deleteSavedQuest(it) }
         )
     }
 
     if (showBarcodeDialog) {
         BarcodeSetupDialog(
+            savedQuests = savedQuests,
             onDismiss = { showBarcodeDialog = false },
-            onBarcodeScanned = { barcode ->
+            onBarcodeScanned = { barcode, title ->
+                if (title != null) {
+                    viewModel.saveQuest("BARCODE", title, barcode)
+                }
                 viewModel.setQuestData(barcode)
                 showBarcodeDialog = false
-            }
+            },
+            onDeleteSavedQuest = { viewModel.deleteSavedQuest(it) }
         )
     }
 
@@ -833,7 +844,8 @@ fun AlarmSetupScreen(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Column {
-                                                ModernBadge(text = "Метка привязана ✓", color = BrandSecondary)
+                                                val matchingSavedNfc = savedQuests.firstOrNull { it.type == "NFC" && it.data == state.questData }
+                                                ModernBadge(text = matchingSavedNfc?.title ?: "Метка привязана ✓", color = BrandSecondary)
                                                 Spacer(Modifier.height(4.dp))
                                                 Text(
                                                     text = "ID: ${state.questData}",
@@ -883,7 +895,8 @@ fun AlarmSetupScreen(
                                             verticalAlignment = Alignment.CenterVertically
                                         ) {
                                             Column {
-                                                ModernBadge(text = "Штрихкод сохранен ✓", color = BrandSecondary)
+                                                val matchingSavedBarcode = savedQuests.firstOrNull { it.type == "BARCODE" && it.data == state.questData }
+                                                ModernBadge(text = matchingSavedBarcode?.title ?: "Штрихкод сохранен ✓", color = BrandSecondary)
                                                 Spacer(Modifier.height(4.dp))
                                                 Text(
                                                     text = "Код: ${state.questData}",

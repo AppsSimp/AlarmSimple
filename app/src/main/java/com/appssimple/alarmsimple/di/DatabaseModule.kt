@@ -7,6 +7,7 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 import com.appssimple.alarmsimple.data.db.AlarmDatabase
 import com.appssimple.alarmsimple.data.db.dao.AlarmDao
 import com.appssimple.alarmsimple.data.db.dao.AudioSnippetDao
+import com.appssimple.alarmsimple.data.db.dao.SavedQuestDao
 import com.appssimple.alarmsimple.data.db.dao.SleepEpochDao
 import com.appssimple.alarmsimple.data.db.dao.SleepSessionDao
 import dagger.Module
@@ -57,6 +58,22 @@ object DatabaseModule {
         }
     }
 
+    private val MIGRATION_3_4 = object : Migration(3, 4) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                """
+                CREATE TABLE IF NOT EXISTS `saved_quests` (
+                    `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                    `type` TEXT NOT NULL,
+                    `title` TEXT NOT NULL,
+                    `data` TEXT NOT NULL,
+                    `createdAt` INTEGER NOT NULL
+                )
+                """.trimIndent()
+            )
+        }
+    }
+
     @Provides
     @Singleton
     fun provideDatabase(@ApplicationContext context: Context): AlarmDatabase {
@@ -64,7 +81,8 @@ object DatabaseModule {
             context,
             AlarmDatabase::class.java,
             "alarm_simple.db"
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+        .fallbackToDestructiveMigration()
         .build()
     }
     
@@ -79,4 +97,7 @@ object DatabaseModule {
 
     @Provides
     fun provideAudioSnippetDao(db: AlarmDatabase): AudioSnippetDao = db.audioSnippetDao()
+
+    @Provides
+    fun provideSavedQuestDao(db: AlarmDatabase): SavedQuestDao = db.savedQuestDao()
 }

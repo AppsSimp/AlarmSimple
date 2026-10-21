@@ -169,7 +169,7 @@ fun SleepHistoryScreen(
                             }
                         )
 
-                        val isSwiping = dismissState.targetValue != SwipeToDismissBoxValue.Settled || dismissState.progress > 0.05f
+                        val isSwiping = dismissState.targetValue != SwipeToDismissBoxValue.Settled && dismissState.progress > 0.08f
                         SwipeToDismissBox(
                             state = dismissState,
                             enableDismissFromStartToEnd = false,
@@ -185,6 +185,8 @@ fun SleepHistoryScreen(
                                     ) {
                                         Icon(Icons.Default.Delete, contentDescription = "Удалить", tint = Color.White)
                                     }
+                                } else {
+                                    Box(modifier = Modifier.fillMaxSize().background(Color.Transparent))
                                 }
                             }
                         ) {
@@ -293,7 +295,7 @@ fun SleepPeriodAnalysisCard(
                     color = Color.White
                 )
                 ModernBadge(
-                    text = if (totalDebtMinutes < -30) "Недосып" else if (totalDebtMinutes > 30) "Пересып" else "В норме",
+                    text = if (totalDebtMinutes < -90) "Недосып" else if (totalDebtMinutes > 90) "Пересып" else "В норме",
                     color = statusColor
                 )
             }
@@ -366,7 +368,9 @@ fun SleepHistoryCardItem(
     val dateFormat = remember { SimpleDateFormat("d MMMM, EEEE", Locale("ru")) }
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
-    val dateStr = dateFormat.format(Date(session.trackingStartMs)).replaceFirstChar { it.titlecase(Locale("ru")) }
+    // Если сон закончился на следующий день (утро следующего дня), зачитываем этот сон следующему дню
+    val displayDateMs = session.wakeUpMs ?: (session.sleepOnsetMs ?: session.trackingStartMs)
+    val dateStr = dateFormat.format(Date(displayDateMs)).replaceFirstChar { it.titlecase(Locale("ru")) }
     val onsetStr = session.sleepOnsetMs?.let { timeFormat.format(Date(it)) } ?: "--:--"
     val wakeStr = session.wakeUpMs?.let { timeFormat.format(Date(it)) } ?: "--:--"
 

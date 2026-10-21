@@ -7,6 +7,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.NotificationsActive
@@ -48,6 +51,7 @@ fun SettingsScreen(
     val defaultVolumeLock by viewModel.defaultVolumeLock.collectAsState(initial = false)
     val backupAlarmEnabled by viewModel.backupSystemAlarmEnabled.collectAsState(initial = false)
     val fakeApplePayEnabled by viewModel.fakeApplePayEnabled.collectAsState(initial = true)
+    val autoSleepTrackingEnabled by viewModel.autoSleepTrackingEnabled.collectAsState(initial = false)
 
     AppBackground {
         Scaffold(
@@ -169,15 +173,17 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Фейковая оплата Apple Pay (NFC)", fontWeight = FontWeight.SemiBold)
+                                Text("Автозапуск трекинга сна", fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    "При отключении будильника картой/NFC-меткой показывать анимацию «Оплачено» со звуком Apple Pay",
+                                    "Автоматически включать ночной трекинг, если телефон лежит неподвижно в кровати в пределах 10 часов до будильника.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Switch(checked = fakeApplePayEnabled, onCheckedChange = viewModel::setFakeApplePayEnabled)
+                            Switch(checked = autoSleepTrackingEnabled, onCheckedChange = viewModel::setAutoSleepTrackingEnabled)
                         }
+
+
 
                         HorizontalDivider(modifier = Modifier.padding(vertical = 12.dp))
 
@@ -289,6 +295,57 @@ fun SettingsScreen(
                     }
                 }
 
+                // Кастомизация и стиль
+                ModernCard {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Star, contentDescription = null, tint = BrandSecondary)
+                            Spacer(Modifier.width(10.dp))
+                            Text("Оформление и анимации", style = MaterialTheme.typography.titleMedium)
+                        }
+                        Spacer(Modifier.height(12.dp))
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Фейковая оплата Apple Pay (NFC)", fontWeight = FontWeight.SemiBold)
+                                Text(
+                                    "При отключении будильника картой/NFC-меткой показывать анимацию «Оплачено» со звуком Apple Pay",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(checked = fakeApplePayEnabled, onCheckedChange = viewModel::setFakeApplePayEnabled)
+                        }
+                    }
+                }
+
+                // Видимый раздел «Для разработчиков»
+                ModernCard(
+                    modifier = Modifier.clickable { onOpenAdminPanel() },
+                    backgroundColor = Color(0xFF1E1B4B).copy(alpha = 0.5f),
+                    borderColor = Color(0xFF6366F1).copy(alpha = 0.4f)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Default.Settings, contentDescription = null, tint = Color(0xFFF59E0B), modifier = Modifier.size(24.dp))
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text("Для разработчиков", fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleMedium)
+                                Text("Ночной CSV-лог сенсоров, калибровка сна, симуляция 14 ночей", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                        }
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+
                 // О приложении (5 тапов открывают админку)
                 var aboutTapCount by remember { mutableIntStateOf(0) }
                 ModernCard(
@@ -334,6 +391,11 @@ class SettingsViewModel @Inject constructor(
     val defaultVolumeLock = userPreferences.defaultVolumeLock
     val backupSystemAlarmEnabled = userPreferences.backupSystemAlarmEnabled
     val fakeApplePayEnabled = userPreferences.fakeApplePayEnabled
+    val autoSleepTrackingEnabled = userPreferences.autoSleepTrackingEnabled
+
+    fun setAutoSleepTrackingEnabled(enabled: Boolean) {
+        viewModelScope.launch { userPreferences.setAutoSleepTrackingEnabled(enabled) }
+    }
 
     fun setFakeApplePayEnabled(enabled: Boolean) {
         viewModelScope.launch { userPreferences.setFakeApplePayEnabled(enabled) }
