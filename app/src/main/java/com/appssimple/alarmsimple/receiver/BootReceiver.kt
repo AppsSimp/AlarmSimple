@@ -82,6 +82,9 @@ class BootReceiver : BroadcastReceiver() {
                             }
                         }
                     }
+
+                    // 3. Запуск проверки авто-трекинга сна
+                    alarmScheduler.scheduleAutoSleepCheckAt(System.currentTimeMillis() + 60_000L)
                 } finally {
                     pendingResult.finish()
                 }

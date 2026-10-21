@@ -38,78 +38,81 @@ import kotlinx.coroutines.delay
 /**
  * Authentic Apple Pay Style "Done" / "Оплачено" Dialog & Animation for NFC Tag dismissals.
  * Features:
- * - Clean iOS Dark card sheet
- * - Circular outline drawing with spring
- * - Checkmark stroke animating from vertex to vertex
- * - Subtle haptic/sound cue
+ * - Clean iOS Dark card sheet with bounce
+ * - Smooth circular outline drawing
+ * - Animated checkmark
+ * - Longer timing (~1.8 seconds) for full visual satisfaction
  */
 @Composable
 fun FakeApplePaySuccessOverlay(
     modifier: Modifier = Modifier,
-    amountText: String = "Бесценный подъем",
+    amountText: String = "0,00 ₽",
     onAnimationEnd: () -> Unit
 ) {
     val circleProgress = remember { Animatable(0f) }
     val checkProgress = remember { Animatable(0f) }
-    val cardScale = remember { Animatable(0.85f) }
+    val cardScale = remember { Animatable(0.82f) }
 
     LaunchedEffect(Unit) {
-        // Pop in the card
+        // 1. Pop in the card sheet with Apple-like spring bounce
         cardScale.animateTo(
             targetValue = 1f,
             animationSpec = spring(
                 dampingRatio = Spring.DampingRatioMediumBouncy,
-                stiffness = Spring.StiffnessLow
+                stiffness = Spring.StiffnessMediumLow
             )
         )
-        // 1. Draw blue/cyan circle
+
+        // 2. Draw circular border (450ms)
         circleProgress.animateTo(
             targetValue = 1f,
-            animationSpec = tween(durationMillis = 350)
+            animationSpec = tween(durationMillis = 450)
         )
-        // 2. Draw checkmark
+
+        // 3. Draw checkmark (380ms)
         checkProgress.animateTo(
             targetValue = 1f,
-            animationSpec = tween(durationMillis = 300)
+            animationSpec = tween(durationMillis = 380)
         )
-        // Hold for user to enjoy the payment feel
-        delay(950L)
+
+        // 4. Hold longer (~1400ms) for the user to enjoy the payment feel
+        delay(1400L)
         onAnimationEnd()
     }
 
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.72f)),
+            .background(Color.Black.copy(alpha = 0.78f)),
         contentAlignment = Alignment.Center
     ) {
         Surface(
             modifier = Modifier
-                .fillMaxWidth(0.82f)
+                .fillMaxWidth(0.84f)
                 .scale(cardScale.value),
-            shape = RoundedCornerShape(26.dp),
+            shape = RoundedCornerShape(28.dp),
             color = Color(0xFF1C1C1E), // iOS system grouped dark background
-            shadowElevation = 24.dp,
-            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF2C2C2E))
+            shadowElevation = 28.dp,
+            border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF38383A))
         ) {
             Column(
-                modifier = Modifier.padding(horizontal = 24.dp, vertical = 32.dp),
+                modifier = Modifier.padding(horizontal = 24.dp, vertical = 34.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 // Apple Pay animated checkmark circle
                 Box(
-                    modifier = Modifier.size(80.dp),
+                    modifier = Modifier.size(86.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    Canvas(modifier = Modifier.size(72.dp)) {
-                        val strokeWidth = 5.dp.toPx()
+                    Canvas(modifier = Modifier.size(76.dp)) {
+                        val strokeWidth = 5.5.dp.toPx()
                         val radius = (size.minDimension - strokeWidth) / 2f
                         val center = Offset(size.width / 2f, size.height / 2f)
 
-                        // Outer Blue Circle Progress
+                        // Outer Green Circle Progress
                         val sweep = circleProgress.value * 360f
                         drawArc(
-                            color = Color(0xFF34C759), // Apple Pay signature success green (or 0xFF007AFF)
+                            color = Color(0xFF34C759), // Signature Apple Pay success green
                             startAngle = -90f,
                             sweepAngle = sweep,
                             useCenter = false,
@@ -154,7 +157,7 @@ fun FakeApplePaySuccessOverlay(
                 Text(
                     text = "Готово",
                     color = Color.White,
-                    fontSize = 22.sp,
+                    fontSize = 24.sp,
                     fontWeight = FontWeight.Bold,
                     letterSpacing = (-0.3).sp
                 )
@@ -164,26 +167,26 @@ fun FakeApplePaySuccessOverlay(
                 Text(
                     text = "Оплачено пробуждением",
                     color = Color(0xFF8E8E93),
-                    fontSize = 14.sp,
+                    fontSize = 15.sp,
                     fontWeight = FontWeight.Normal
                 )
 
                 Spacer(Modifier.height(14.dp))
 
                 Text(
-                    text = "0,00 ₽",
+                    text = amountText,
                     color = Color.White,
-                    fontSize = 28.sp,
+                    fontSize = 30.sp,
                     fontWeight = FontWeight.SemiBold,
                     letterSpacing = (-0.5).sp
                 )
 
-                Spacer(Modifier.height(4.dp))
+                Spacer(Modifier.height(6.dp))
 
                 Text(
                     text = "NFC Tag Dismiss • Apple Pay Style",
                     color = Color(0xFF636366),
-                    fontSize = 11.sp,
+                    fontSize = 12.sp,
                     fontWeight = FontWeight.Medium
                 )
             }

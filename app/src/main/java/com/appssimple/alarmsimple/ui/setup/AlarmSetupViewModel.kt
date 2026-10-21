@@ -6,7 +6,9 @@ import android.net.Uri
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.appssimple.alarmsimple.data.db.dao.AlarmDao
+import com.appssimple.alarmsimple.data.db.dao.SavedQuestDao
 import com.appssimple.alarmsimple.data.db.entity.AlarmEntity
+import com.appssimple.alarmsimple.data.db.entity.SavedQuestEntity
 import com.appssimple.alarmsimple.data.preferences.UserPreferences
 import com.appssimple.alarmsimple.domain.model.AlarmMode
 import com.appssimple.alarmsimple.domain.model.QuestType
@@ -15,9 +17,11 @@ import com.appssimple.alarmsimple.service.AlarmScheduler
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.util.Calendar
@@ -55,6 +59,7 @@ data class AlarmSetupUiState(
 @HiltViewModel
 class AlarmSetupViewModel @Inject constructor(
     private val alarmDao: AlarmDao,
+    private val savedQuestDao: SavedQuestDao,
     private val alarmScheduler: AlarmScheduler,
     private val userPreferences: UserPreferences,
     @ApplicationContext private val context: Context
@@ -62,6 +67,9 @@ class AlarmSetupViewModel @Inject constructor(
 
     private val _uiState = MutableStateFlow(AlarmSetupUiState())
     val uiState: StateFlow<AlarmSetupUiState> = _uiState.asStateFlow()
+
+    val savedQuests: StateFlow<List<SavedQuestEntity>> = savedQuestDao.getAllSavedQuests()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     init {
         viewModelScope.launch {
@@ -187,6 +195,24 @@ class AlarmSetupViewModel @Inject constructor(
     fun setLabel(label: String) { _uiState.update { it.copy(label = label) } }
     fun clearError() { _uiState.update { it.copy(errorMessage = null) } }
 
+    fun saveQuest(type: String, title: String, data: String) {
+        viewModelScope.launch {
+            savedQuestDao.insertQuest(
+                SavedQuestEntity(
+                    type = type,
+                    title = title.ifBlank { if (type == "NFC") "NFC-метка" else "Штрихкод" },
+                    data = data
+                )
+            )
+        }
+    }
+
+    fun deleteSavedQuest(quest: SavedQuestEntity) {
+        viewModelScope.launch {
+            savedQuestDao.deleteQuest(quest)
+        }
+    }
+
     fun saveAlarm(onSaved: () -> Unit) {
         val snapshot = _uiState.value
         if (snapshot.isSaving) return
@@ -236,6 +262,9 @@ class AlarmSetupViewModel @Inject constructor(
                     if (isBackupAlarmEnabled) {
                         alarmScheduler.setSystemBackupAlarm(targetTimeMs, "Страховка: AlarmSimple")
                     }
+
+                    // Проверяем авто-трекинг сна
+                    alarmScheduler.scheduleAutoSleepCheckAt(System.currentTimeMillis() + 60_000L)
                 }
 
                 _uiState.update { it.copy(isSaving = false) }

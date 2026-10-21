@@ -54,6 +54,10 @@
     <string name="unlimited">Unlimited</string>
     <string name="volume_lock">Lock volume at maximum</string>
     <string name="volume_lock_desc">Prevent lowering volume with hardware buttons during alarm</string>
+    <string name="backup_alarm">System backup alarm</string>
+    <string name="backup_alarm_desc">Set a fallback system alarm 5 minutes later in case of OS failure</string>
+    <string name="auto_sleep_tracking">Auto sleep tracking</string>
+    <string name="auto_sleep_tracking_desc">Automatically start tracking sleep if phone is still within 10 hours before alarm</string>
     <string name="siren_enabled">Siren mode</string>
     <string name="siren_desc">Loud alarm if quest isn\'t completed in 5 minutes</string>
     <string name="snooze_duration">Snooze duration</string>

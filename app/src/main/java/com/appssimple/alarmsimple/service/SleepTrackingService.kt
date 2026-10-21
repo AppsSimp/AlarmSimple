@@ -62,11 +62,13 @@ class SleepTrackingService : Service() {
     private var disturbanceCount: Int = 0
     private var snoreMinutesCount: Int = 0
     private var alarmTriggered = false
+    private var heartbeatPendingIntent: PendingIntent? = null
 
     companion object {
         const val NOTIFICATION_ID = 2001
         const val ACTION_START_TRACKING = "com.appssimple.alarmsimple.ACTION_START_TRACKING"
         const val ACTION_STOP_TRACKING = "com.appssimple.alarmsimple.ACTION_STOP_TRACKING"
+        const val ACTION_HEARTBEAT = "com.appssimple.alarmsimple.ACTION_HEARTBEAT"
         const val EXTRA_ALARM_ID = "EXTRA_ALARM_ID"
 
         /** Used when the user tracks sleep without configuring an alarm. */
@@ -102,6 +104,16 @@ class SleepTrackingService : Service() {
             ACTION_STOP_TRACKING -> {
                 stopTracking()
             }
+            ACTION_HEARTBEAT -> {
+                if (_isTracking.value) {
+                    try {
+                        if (wakeLock?.isHeld != true) {
+                            wakeLock?.acquire(12 * 60 * 60 * 1000L)
+                        }
+                    } catch (ignored: Exception) {}
+                    scheduleHeartbeat()
+                }
+            }
             else -> stopSelf()
         }
         return START_NOT_STICKY
@@ -123,6 +135,20 @@ class SleepTrackingService : Service() {
         startForegroundServiceWithNotification()
         _isTracking.value = true
         _trackingStartMs.value = System.currentTimeMillis()
+
+        // Железобетонное удержание процессора:
+        try {
+            if (wakeLock?.isHeld != true) {
+                wakeLock?.acquire(12 * 60 * 60 * 1000L)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+
+        // Запуск системного AlarmManager Heartbeat каждые 8 минут.
+        // AlarmManager.setExactAndAllowWhileIdle выводит устройство из Doze Mode,
+        // гарантируя, что ни один планировщик Android не заснет на часы!
+        scheduleHeartbeat()
 
         serviceScope.launch {
             val alarm = if (alarmId > 0) alarmDao.getAlarmById(alarmId) else null
@@ -286,9 +312,48 @@ class SleepTrackingService : Service() {
                 }
             }
 
+            cancelHeartbeat()
+            try {
+                if (wakeLock?.isHeld == true) {
+                    wakeLock?.release()
+                }
+            } catch (e: Exception) {}
+
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
         }
+    }
+
+    private fun scheduleHeartbeat() {
+        try {
+            val alarmManager = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+            val intent = Intent(this, SleepTrackingService::class.java).apply {
+                action = ACTION_HEARTBEAT
+            }
+            heartbeatPendingIntent = PendingIntent.getService(
+                this,
+                9090,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val nextHeartbeat = System.currentTimeMillis() + 8 * 60_000L // 8 minutes
+            alarmManager.setExactAndAllowWhileIdle(
+                android.app.AlarmManager.RTC_WAKEUP,
+                nextHeartbeat,
+                heartbeatPendingIntent!!
+            )
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun cancelHeartbeat() {
+        try {
+            heartbeatPendingIntent?.let {
+                val alarmManager = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
+                alarmManager.cancel(it)
+            }
+        } catch (e: Exception) {}
     }
 
     private fun startForegroundServiceWithNotification() {

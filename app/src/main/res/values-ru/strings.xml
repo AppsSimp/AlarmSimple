@@ -48,6 +48,8 @@
     <string name="volume_lock_desc">Запретить уменьшение громкости кнопками во время будильника</string>
     <string name="backup_alarm">Системный предохранитель</string>
     <string name="backup_alarm_desc">Заводить резервный системный будильник на 5 минут позже</string>
+    <string name="auto_sleep_tracking">Автозапуск трекинга сна</string>
+    <string name="auto_sleep_tracking_desc">Автоматически запускать трекинг, если телефон неподвижен за 10 часов до будильника</string>
     <string name="snooze_duration">Длительность отложения</string>
     
     <string name="onboarding_welcome">Добро пожаловать в AlarmSimple</string>

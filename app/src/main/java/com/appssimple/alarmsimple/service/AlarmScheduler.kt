@@ -106,9 +106,17 @@ class AlarmScheduler @Inject constructor(
                 putExtra(android.provider.AlarmClock.EXTRA_HOUR, backupCal.get(java.util.Calendar.HOUR_OF_DAY))
                 putExtra(android.provider.AlarmClock.EXTRA_MINUTES, backupCal.get(java.util.Calendar.MINUTE))
                 putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION
             }
             context.startActivity(intent)
+
+            // Сразу возвращаем AlarmSimple на передний план, чтобы системное приложение часов не мелькало
+            try {
+                val bringBackIntent = Intent(context, com.appssimple.alarmsimple.ui.MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION
+                }
+                context.startActivity(bringBackIntent)
+            } catch (ignored: Exception) {}
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -123,9 +131,16 @@ class AlarmScheduler @Inject constructor(
                 putExtra(android.provider.AlarmClock.EXTRA_ALARM_SEARCH_MODE, android.provider.AlarmClock.ALARM_SEARCH_MODE_LABEL)
                 putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, label)
                 putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
-                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION
             }
             context.startActivity(intent)
+
+            try {
+                val bringBackIntent = Intent(context, com.appssimple.alarmsimple.ui.MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION
+                }
+                context.startActivity(bringBackIntent)
+            } catch (ignored: Exception) {}
         } catch (e: Exception) {
             // Запасной вариант без параметров, если производитель не поддерживает фильтрацию по лейблу
             try {
@@ -149,5 +164,45 @@ class AlarmScheduler @Inject constructor(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         alarmManager.cancel(operationPendingIntent)
+    }
+
+    fun scheduleAutoSleepCheckAt(triggerTimeMs: Long) {
+        try {
+            val now = System.currentTimeMillis()
+            val target = if (triggerTimeMs < now + 60_000L) now + 60_000L else triggerTimeMs
+            val intent = Intent(context, com.appssimple.alarmsimple.receiver.AutoSleepCheckReceiver::class.java).apply {
+                action = com.appssimple.alarmsimple.receiver.AutoSleepCheckReceiver.ACTION_CHECK_AUTO_SLEEP
+            }
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                9999,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, target, pendingIntent)
+            } else {
+                alarmManager.setExact(AlarmManager.RTC_WAKEUP, target, pendingIntent)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun cancelAutoSleepCheck() {
+        try {
+            val intent = Intent(context, com.appssimple.alarmsimple.receiver.AutoSleepCheckReceiver::class.java).apply {
+                action = com.appssimple.alarmsimple.receiver.AutoSleepCheckReceiver.ACTION_CHECK_AUTO_SLEEP
+            }
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                9999,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.cancel(pendingIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 }

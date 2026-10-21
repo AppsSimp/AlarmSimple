@@ -60,6 +60,7 @@ class SensorFusion @Inject constructor(
 
     // Consecutive stillness epochs inside sleep (used for DEEP sleep entry)
     private var sleepConsecutiveStillEpochs = 0
+    private var lastEpochTimestampMs = 0L
 
     // Adaptive thresholding: history of movement intensities during this session
     private val sessionMovementHistory = mutableListOf<Float>()
@@ -131,6 +132,17 @@ class SensorFusion @Inject constructor(
 
     private fun processCombinedEpoch(movement: EpochMovementResult) {
         val now = movement.timestampMs
+        val timeDeltaMs = if (lastEpochTimestampMs > 0L) now - lastEpochTimestampMs else 30_000L
+        lastEpochTimestampMs = now
+
+        // Если операционная система замораживала поток процессора (разрыв больше 60 секунд),
+        // не засчитываем время как 1 эпоху! При разрыве более 60 сек сбрасываем счетчик подряд идущих эпох
+        val isSystemGap = timeDeltaMs > 65_000L
+        if (isSystemGap) {
+            // Фриз системы: плавно восстанавливаемся, не делая резких ложных переходов в REM
+            sleepConsecutiveStillEpochs = kotlin.math.min(sleepConsecutiveStillEpochs, 4)
+        }
+
         sessionMovementHistory.add(movement.movementIntensity)
 
         // 1. Determine dominant audio class during this 30s epoch
@@ -248,37 +260,41 @@ class SensorFusion @Inject constructor(
         val cyclePosition = ((minutesSinceOnset % 90) / 90f) // Position in 90-min ultradian cycle [0.0, 1.0]
 
         // Physiological rules:
-        // 1. Initial 15 minutes of sleep is always LIGHT sleep (N1/N2). Cannot jump straight to DEEP!
+        // 1. Начальные 15 минут после засыпания — строго LIGHT (N1/N2).
         if (minutesSinceOnset < 15) {
             return SleepPhase.LIGHT
         }
 
-        // 2. To enter DEEP sleep (N3):
-        // Must have at least 16 epochs (~8 minutes) of uninterrupted stillness inside sleep,
-        // and be in the first half of the 90-min ultradian cycle (cycles 1-3).
+        // 2. Чтобы войти в DEEP (N3) или REM:
+        // Обязателен барьер покоя: не менее 12-14 эпох (6-7 минут непрерывного штиля) после любого движения!
+        // Никакого REM через 3 минуты после пробуждения утром.
+        if (sleepConsecutiveStillEpochs < 12) {
+            return SleepPhase.LIGHT
+        }
+
+        // 3. Вход в DEEP (Глубокий сон):
+        // Доминирует в первые 4 часа ночи (циклы 1-3), в первой половине цикла (cyclePosition < 0.60).
+        // Порог: от 12 эпох покоя в первой половине ночи или стабильный храп.
         val isEarlyInCycle = cyclePosition < 0.60f
-        val isEarlyHours = minutesSinceOnset < 210 // First 3.5 hours
-        val hasDeepStillness = sleepConsecutiveStillEpochs >= 16
+        val isEarlyHours = minutesSinceOnset < 240 // Первые 4 часа ночи
+        val isDeepCandidate = sleepConsecutiveStillEpochs >= 12 && isEarlyInCycle && isEarlyHours
+        val isSnoringDeep = audio == AudioClass.SNORE && sleepConsecutiveStillEpochs >= 8 && isEarlyInCycle
 
-        if (hasDeepStillness && isEarlyInCycle && isEarlyHours) {
+        if (isDeepCandidate || isSnoringDeep) {
             return SleepPhase.DEEP
         }
 
-        // Snoring during stillness in early/mid cycle is also a strong marker of deep sleep
-        if (audio == AudioClass.SNORE && sleepConsecutiveStillEpochs >= 10 && isEarlyInCycle) {
-            return SleepPhase.DEEP
-        }
-
-        // 3. REM sleep (Rapid Eye Movement / Dream phase):
-        // Occurs in the latter part of each 90-min cycle (cyclePosition > 0.65), especially after 3 hours of sleep.
-        // Requires sustained sleep (at least 6 epochs stillness) with regular breathing audio or stillness late in cycle.
+        // 4. REM (Быстрый сон):
+        // Возникает только во второй половине 90-минутного цикла (cyclePosition >= 0.65)
+        // и только после минимум 180 минут (3 часов) от начала сна.
+        // Требует минимум 16 эпох непрерывного покоя после AWAKE (не менее 8 минут).
         val isLateInCycle = cyclePosition >= 0.65f
-        val isLateInNight = minutesSinceOnset >= 150
-        if (isLateInCycle && isLateInNight && sleepConsecutiveStillEpochs in 6..30) {
+        val isLateInNight = minutesSinceOnset >= 180
+        if (isLateInCycle && isLateInNight && sleepConsecutiveStillEpochs >= 16) {
             return SleepPhase.REM
         }
 
-        // 4. Default baseline sleep phase is LIGHT (N2) — accounts for ~55-60% of healthy sleep!
+        // 5. Базовая фаза сна — LIGHT (Основной сон, 55-60% времени)
         return SleepPhase.LIGHT
     }
 }

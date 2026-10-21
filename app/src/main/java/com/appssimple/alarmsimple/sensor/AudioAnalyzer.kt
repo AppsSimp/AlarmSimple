@@ -79,7 +79,7 @@ class AudioAnalyzer @Inject constructor(
     private val maxSnippetsPerNight = 20
 
     // Dynamic noise floor tracking (Leaky minimum follower)
-    var noiseFloorRms = 150f
+    var noiseFloorRms = 25f // Start at realistic night bedroom silence level to avoid 12x calibration drops
         private set
 
     companion object {
@@ -201,11 +201,14 @@ class AudioAnalyzer @Inject constructor(
     }
 
     private fun updateNoiseFloor(rms: Float) {
+        // Smoothly track background ambient noise floor
         if (rms < noiseFloorRms) {
-            noiseFloorRms = noiseFloorRms * 0.95f + rms * 0.05f
+            noiseFloorRms = noiseFloorRms * 0.90f + rms * 0.10f
         } else {
-            noiseFloorRms = noiseFloorRms * 0.999f + rms * 0.001f
+            noiseFloorRms = noiseFloorRms * 0.998f + rms * 0.002f
         }
+        // Keep within realistic physical bounds
+        if (noiseFloorRms < 10f) noiseFloorRms = 10f
     }
 
     private fun classifyAudio(

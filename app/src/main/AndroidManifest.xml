@@ -109,6 +109,15 @@
             </intent-filter>
         </receiver>
 
+        <!-- Auto Sleep Check Receiver -->
+        <receiver
+            android:name=".receiver.AutoSleepCheckReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.appssimple.alarmsimple.ACTION_CHECK_AUTO_SLEEP" />
+            </intent-filter>
+        </receiver>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"

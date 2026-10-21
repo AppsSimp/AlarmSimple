@@ -8,6 +8,7 @@ import com.appssimple.alarmsimple.service.AlarmScheduler
 import com.appssimple.alarmsimple.data.preferences.UserPreferences
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -69,8 +70,17 @@ class AlarmListViewModel @Inject constructor(
                     )
                     alarmDao.updateAlarm(alarm.copy(targetTimeMs = nextTrigger, isActive = true))
                     alarmScheduler.scheduleAlarm(nextTrigger, alarm.id)
+
+                    val isBackupEnabled = userPreferences.backupSystemAlarmEnabled.first()
+                    if (isBackupEnabled) {
+                        alarmScheduler.setSystemBackupAlarm(nextTrigger, "AlarmSimple (${alarm.label.ifEmpty { "Будильник" }})")
+                    }
                 } else {
                     alarmScheduler.cancelAlarm(alarm.id)
+                    val isBackupEnabled = userPreferences.backupSystemAlarmEnabled.first()
+                    if (isBackupEnabled) {
+                        alarmScheduler.dismissSystemBackupAlarm("AlarmSimple (${alarm.label.ifEmpty { "Будильник" }})")
+                    }
                 }
             }
         }
