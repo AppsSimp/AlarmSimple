@@ -46,6 +46,7 @@ class SleepTrackingService : Service() {
     @Inject lateinit var alarmDao: AlarmDao
     @Inject lateinit var alarmScheduler: AlarmScheduler
     @Inject lateinit var sleepDebugLogger: com.appssimple.alarmsimple.sensor.SleepDebugLogger
+    @Inject lateinit var silentAudioPlayer: com.appssimple.alarmsimple.sensor.SilentAudioPlayer
 
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var wakeLock: PowerManager.WakeLock? = null
@@ -62,7 +63,7 @@ class SleepTrackingService : Service() {
     private var disturbanceCount: Int = 0
     private var snoreMinutesCount: Int = 0
     private var alarmTriggered = false
-    private var heartbeatPendingIntent: PendingIntent? = null
+    private var lastRecordedPhase: SleepPhase? = null
 
     companion object {
         const val NOTIFICATION_ID = 2001
@@ -108,10 +109,10 @@ class SleepTrackingService : Service() {
                 if (_isTracking.value) {
                     try {
                         if (wakeLock?.isHeld != true) {
-                            wakeLock?.acquire(12 * 60 * 60 * 1000L)
+                            wakeLock?.acquire(11 * 60 * 60 * 1000L)
                         }
                     } catch (ignored: Exception) {}
-                    scheduleHeartbeat()
+                    com.appssimple.alarmsimple.receiver.SleepHeartbeatReceiver.scheduleNext(this)
                 }
             }
             else -> stopSelf()
@@ -148,6 +149,7 @@ class SleepTrackingService : Service() {
         // Запуск системного AlarmManager Heartbeat каждые 8 минут.
         // AlarmManager.setExactAndAllowWhileIdle выводит устройство из Doze Mode,
         // гарантируя, что ни один планировщик Android не заснет на часы!
+        lastRecordedPhase = null
         scheduleHeartbeat()
 
         serviceScope.launch {
@@ -168,7 +170,8 @@ class SleepTrackingService : Service() {
             currentSessionId = sleepSessionDao.insertSession(session)
 
             // Start sensors
-            sensorFusion.start(currentSessionId)
+            silentAudioPlayer.start()
+        sensorFusion.start(currentSessionId)
 
             // Listen for sensor events
             launch {
@@ -218,9 +221,10 @@ class SleepTrackingService : Service() {
         if (epochState.dominantAudioClass == com.appssimple.alarmsimple.domain.model.AudioClass.SNORE) {
             snoreMinutesCount += 1 // ~30 sec
         }
-        if (epochState.phase == SleepPhase.AWAKE && sleepOnsetMs != null) {
+        if (epochState.phase == SleepPhase.AWAKE && lastRecordedPhase != null && lastRecordedPhase != SleepPhase.AWAKE && sleepOnsetMs != null) {
             disturbanceCount++
         }
+        lastRecordedPhase = epochState.phase
 
         // Sleep onset detection
         if (epochState.isSleepOnsetDetected && sleepOnsetMs == null) {
@@ -285,6 +289,7 @@ class SleepTrackingService : Service() {
         _trackingStartMs.value = 0L
 
         serviceScope.launch {
+            silentAudioPlayer.stop()
             sensorFusion.stop()
 
             if (currentSessionId > 0) {
@@ -325,35 +330,11 @@ class SleepTrackingService : Service() {
     }
 
     private fun scheduleHeartbeat() {
-        try {
-            val alarmManager = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
-            val intent = Intent(this, SleepTrackingService::class.java).apply {
-                action = ACTION_HEARTBEAT
-            }
-            heartbeatPendingIntent = PendingIntent.getService(
-                this,
-                9090,
-                intent,
-                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-            )
-            val nextHeartbeat = System.currentTimeMillis() + 8 * 60_000L // 8 minutes
-            alarmManager.setExactAndAllowWhileIdle(
-                android.app.AlarmManager.RTC_WAKEUP,
-                nextHeartbeat,
-                heartbeatPendingIntent!!
-            )
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        com.appssimple.alarmsimple.receiver.SleepHeartbeatReceiver.scheduleNext(this)
     }
 
     private fun cancelHeartbeat() {
-        try {
-            heartbeatPendingIntent?.let {
-                val alarmManager = getSystemService(Context.ALARM_SERVICE) as android.app.AlarmManager
-                alarmManager.cancel(it)
-            }
-        } catch (e: Exception) {}
+        com.appssimple.alarmsimple.receiver.SleepHeartbeatReceiver.cancel(this)
     }
 
     private fun startForegroundServiceWithNotification() {
@@ -386,8 +367,16 @@ class SleepTrackingService : Service() {
             .addAction(0, "Завершить", stopPendingIntent)
             .build()
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            startForeground(NOTIFICATION_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        val serviceTypes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE or ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+        } else {
+            0
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIFICATION_ID, notification, serviceTypes)
         } else {
             startForeground(NOTIFICATION_ID, notification)
         }
@@ -397,6 +386,7 @@ class SleepTrackingService : Service() {
         _isTracking.value = false
         _trackingStartMs.value = 0L
         serviceScope.cancel()
+        silentAudioPlayer.stop()
         wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
     }

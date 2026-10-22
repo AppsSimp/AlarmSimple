@@ -6,6 +6,7 @@ import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -34,6 +35,9 @@ data class EpochMovementResult(
 /**
  * Collects accelerometer samples, removes gravity vector via low-pass/high-pass filtering,
  * and packages them into 30-second epochs for sleep staging.
+ *
+ * Driven by an independent internal ticker loop so epochs are ALWAYS emitted on schedule
+ * even if the device is completely still or Android pauses sensor dispatching.
  */
 @Singleton
 class AccelerometerCollector @Inject constructor(
@@ -41,7 +45,16 @@ class AccelerometerCollector @Inject constructor(
 ) : SensorEventListener {
 
     private val sensorManager = context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
-    private val accelerometer = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+    // Prefer wake-up accelerometer if hardware supports it to keep reporting when screen is off
+    private val accelerometer: Sensor? = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.LOLLIPOP) {
+        sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER, true)
+            ?: sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+    } else {
+        sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+    }
+
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+    private var tickerJob: Job? = null
 
     private val _epochFlow = MutableSharedFlow<EpochMovementResult>(extraBufferCapacity = 64)
     val epochFlow: SharedFlow<EpochMovementResult> = _epochFlow.asSharedFlow()
@@ -55,23 +68,21 @@ class AccelerometerCollector @Inject constructor(
     private var gravityZ = 0f
     private val alpha = 0.8f // Gravity low-pass filter factor
 
+    @Volatile
     private var isCollecting = false
-    private var epochStartTimeMs = 0L
     @Volatile var lastSampleTimeMs = 0L
         private set
 
     companion object {
         const val SAMPLES_DELAY_US = 200_000 // 5 Hz (200ms)
-        const val MAX_REPORT_LATENCY_US = 5_000_000 // 5-second FIFO batching for power efficiency
         const val EPOCH_DURATION_MS = 30_000L // 30 seconds standard actigraphy epoch
         const val MOVEMENT_NOISE_THRESHOLD = 0.025f // Filter out tiny sensor jitter (m/s^2)
-        const val WAKE_MOVEMENT_THRESHOLD = 0.35f
+        const val MAX_SAMPLES_BUFFER = 600
     }
 
     fun start() {
         if (isCollecting || accelerometer == null) return
         isCollecting = true
-        epochStartTimeMs = System.currentTimeMillis()
         synchronized(samplesLock) {
             currentSamples.clear()
         }
@@ -80,11 +91,29 @@ class AccelerometerCollector @Inject constructor(
             accelerometer,
             SAMPLES_DELAY_US
         )
+
+        // Master clock ticker: гарантирует выработку эпохи ровно каждые 30 секунд независимо от активности датчиков
+        tickerJob?.cancel()
+        tickerJob = scope.launch {
+            while (isCollecting && isActive) {
+                delay(EPOCH_DURATION_MS)
+                val now = System.currentTimeMillis()
+                val samples = synchronized(samplesLock) {
+                    val list = ArrayList(currentSamples)
+                    currentSamples.clear()
+                    list
+                }
+                val epochResult = processEpoch(samples, now)
+                _epochFlow.tryEmit(epochResult)
+            }
+        }
     }
 
     fun stop() {
         if (!isCollecting) return
         isCollecting = false
+        tickerJob?.cancel()
+        tickerJob = null
         sensorManager.unregisterListener(this)
         synchronized(samplesLock) {
             currentSamples.clear()
@@ -98,29 +127,17 @@ class AccelerometerCollector @Inject constructor(
         gravityX = alpha * gravityX + (1 - alpha) * event.values[0]
         gravityY = alpha * gravityY + (1 - alpha) * event.values[1]
         gravityZ = alpha * gravityZ + (1 - alpha) * event.values[2]
-        lastSampleTimeMs = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
+        lastSampleTimeMs = now
 
         // 2. Linear acceleration without gravity
         val linearX = event.values[0] - gravityX
         val linearY = event.values[1] - gravityY
         val linearZ = event.values[2] - gravityZ
 
-        val now = System.currentTimeMillis()
-        var completedEpochSamples: List<AccelSample>? = null
-
         synchronized(samplesLock) {
-            currentSamples.add(AccelSample(now, linearX, linearY, linearZ))
-            if (now - epochStartTimeMs >= EPOCH_DURATION_MS) {
-                completedEpochSamples = ArrayList(currentSamples)
-                currentSamples.clear()
-                epochStartTimeMs = now
-            }
-        }
-
-        completedEpochSamples?.let { samples ->
-            if (samples.isNotEmpty()) {
-                val epochResult = processEpoch(samples, now)
-                _epochFlow.tryEmit(epochResult)
+            if (currentSamples.size < MAX_SAMPLES_BUFFER) {
+                currentSamples.add(AccelSample(now, linearX, linearY, linearZ))
             }
         }
     }
@@ -128,10 +145,22 @@ class AccelerometerCollector @Inject constructor(
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
 
     private fun processEpoch(samples: List<AccelSample>, epochTimestamp: Long): EpochMovementResult {
+        if (samples.isEmpty()) {
+            // Если за 30 секунд телефон лежал неподвижно и события датчика не поступали
+            return EpochMovementResult(
+                timestampMs = epochTimestamp,
+                movementIntensity = 0f,
+                maxDelta = 0f,
+                standardDeviation = 0f,
+                movementCount = 0,
+                isUserMoving = false
+            )
+        }
+
         var movementIntensity = 0f
         var maxDelta = 0f
         var movementCount = 0
-        val magnitudes = mutableListOf<Float>()
+        val magnitudes = ArrayList<Float>(samples.size)
 
         for (i in 1 until samples.size) {
             val prev = samples[i - 1]
@@ -153,8 +182,8 @@ class AccelerometerCollector @Inject constructor(
         }
 
         val stdDev = calculateStdDev(magnitudes)
-        // User movement threshold (calibrated for in-bed tossing & shifting)
-        val isUserMoving = movementIntensity >= 0.10f || maxDelta >= 0.20f
+        // User movement threshold: значительное шевеление в кровати
+        val isUserMoving = movementIntensity >= 0.50f || maxDelta >= 0.35f
 
         return EpochMovementResult(
             timestampMs = epochTimestamp,
