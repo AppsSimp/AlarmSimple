@@ -134,49 +134,103 @@ class AudioAnalyzer @Inject constructor(
         audioRecord = null
     }
 
+    private fun restartAudioRecord() {
+        try {
+            audioRecord?.stop()
+            audioRecord?.release()
+        } catch (ignored: Exception) {}
+        audioRecord = null
+
+        try {
+            val minBufferSize = AudioRecord.getMinBufferSize(
+                sampleRate,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT
+            )
+            val bufferSize = max(minBufferSize, BUFFER_SIZE_SAMPLES * 2)
+            val newRecord = AudioRecord(
+                MediaRecorder.AudioSource.MIC,
+                sampleRate,
+                AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT,
+                bufferSize
+            )
+            if (newRecord.state == AudioRecord.STATE_INITIALIZED) {
+                newRecord.startRecording()
+                audioRecord = newRecord
+            } else {
+                newRecord.release()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     private suspend fun runProcessingLoop(sessionId: Long) {
         val readBuffer = ShortArray(BUFFER_SIZE_SAMPLES)
         val byteBuffer = ByteArray(BUFFER_SIZE_SAMPLES * 2)
+        var errorCount = 0
 
         while (isRunning && currentCoroutineContext().isActive) {
-            val record = audioRecord ?: break
-            val readCount = record.read(readBuffer, 0, BUFFER_SIZE_SAMPLES)
+            val record = audioRecord
+            if (record == null || record.state != AudioRecord.STATE_INITIALIZED) {
+                restartAudioRecord()
+                delay(300)
+                continue
+            }
 
-            if (readCount > 0) {
-                // Check if music/video is actively playing on this device
-                val isDeviceMediaPlaying = audioManager.isMusicActive
+            val readCount = try {
+                record.read(readBuffer, 0, BUFFER_SIZE_SAMPLES)
+            } catch (e: Exception) {
+                -1
+            }
 
-                // Convert short array to bytes and write to circular buffer
-                for (i in 0 until readCount) {
-                    val s = readBuffer[i].toInt()
-                    byteBuffer[i * 2] = (s and 0xFF).toByte()
-                    byteBuffer[i * 2 + 1] = ((s shr 8) and 0xFF).toByte()
+            if (readCount <= 0) {
+                errorCount++
+                if (errorCount >= 5) {
+                    restartAudioRecord()
+                    errorCount = 0
+                    delay(500)
+                } else {
+                    delay(100)
                 }
+                continue
+            }
+            errorCount = 0
 
-                writeToCircularBuffer(byteBuffer, readCount * 2)
+            // Check if music/video is actively playing on this device
+            val isDeviceMediaPlaying = audioManager.isMusicActive
 
-                // Acoustic analysis
-                val rms = calculateRms(readBuffer, readCount)
-                updateNoiseFloor(rms)
+            // Convert short array to bytes and write to circular buffer
+            for (i in 0 until readCount) {
+                val s = readBuffer[i].toInt()
+                byteBuffer[i * 2] = (s and 0xFF).toByte()
+                byteBuffer[i * 2 + 1] = ((s shr 8) and 0xFF).toByte()
+            }
 
-                val audioClass = classifyAudio(readBuffer, readCount, rms, isDeviceMediaPlaying)
-                val snoreLikelihood = if (audioClass == AudioClass.SNORE) 0.9f else 0.1f
+            writeToCircularBuffer(byteBuffer, readCount * 2)
 
-                val now = System.currentTimeMillis()
-                _analysisFlow.tryEmit(
-                    AudioAnalysisResult(
-                        timestampMs = now,
-                        audioClass = audioClass,
-                        rmsAmplitude = rms,
-                        snoreLikelihood = snoreLikelihood,
-                        isMediaPlayingOnDevice = isDeviceMediaPlaying
-                    )
+            // Acoustic analysis
+            val rms = calculateRms(readBuffer, readCount)
+            updateNoiseFloor(rms)
+
+            val audioClass = classifyAudio(readBuffer, readCount, rms, isDeviceMediaPlaying)
+            val snoreLikelihood = if (audioClass == AudioClass.SNORE) 0.9f else 0.1f
+
+            val now = System.currentTimeMillis()
+            _analysisFlow.tryEmit(
+                AudioAnalysisResult(
+                    timestampMs = now,
+                    audioClass = audioClass,
+                    rmsAmplitude = rms,
+                    snoreLikelihood = snoreLikelihood,
+                    isMediaPlayingOnDevice = isDeviceMediaPlaying
                 )
+            )
 
-                // Trigger saving snippet if an interesting event occurs
-                if (!isDeviceMediaPlaying && shouldTriggerSnippet(audioClass, rms, now)) {
-                    triggerSnippetRecording(sessionId, audioClass, rms, now)
-                }
+            // Trigger saving snippet if an interesting event occurs
+            if (!isDeviceMediaPlaying && shouldTriggerSnippet(audioClass, rms, now)) {
+                triggerSnippetRecording(sessionId, audioClass, rms, now)
             }
 
             // Power-efficiency sleep: 15-20ms

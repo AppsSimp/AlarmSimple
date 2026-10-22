@@ -82,7 +82,7 @@
         <!-- Sleep Tracking Service -->
         <service
             android:name=".service.SleepTrackingService"
-            android:foregroundServiceType="microphone"
+            android:foregroundServiceType="microphone|mediaPlayback"
             android:exported="false" />
         
         <!-- Alarm Firing Service -->
@@ -115,6 +115,15 @@
             android:exported="false">
             <intent-filter>
                 <action android:name="com.appssimple.alarmsimple.ACTION_CHECK_AUTO_SLEEP" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Sleep Heartbeat Receiver (Anti-Doze 5-minute wakeup) -->
+        <receiver
+            android:name=".receiver.SleepHeartbeatReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.appssimple.alarmsimple.ACTION_SLEEP_HEARTBEAT" />
             </intent-filter>
         </receiver>
 
