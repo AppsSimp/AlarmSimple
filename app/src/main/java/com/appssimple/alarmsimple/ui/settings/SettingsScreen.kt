@@ -444,6 +444,9 @@ class SettingsViewModel @Inject constructor(
     }
 
     fun setBackupSystemAlarmEnabled(enabled: Boolean) {
-        viewModelScope.launch { userPreferences.setBackupSystemAlarmEnabled(enabled) }
+        viewModelScope.launch {
+            userPreferences.setBackupSystemAlarmEnabled(enabled)
+            alarmScheduler.syncBackupAlarmState(enabled)
+        }
     }
 }

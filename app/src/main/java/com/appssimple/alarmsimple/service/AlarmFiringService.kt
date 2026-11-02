@@ -55,6 +55,7 @@ class AlarmFiringService : Service() {
     companion object {
         const val NOTIFICATION_ID = 3001
         const val EXTRA_ALARM_ID = "EXTRA_ALARM_ID"
+        const val EXTRA_IS_FAILSAFE = "EXTRA_IS_FAILSAFE"
         const val EXTRA_EARLY_WAKE = "EXTRA_EARLY_WAKE"
         const val ACTION_GIVE_5_MINUTES = "com.appssimple.alarmsimple.ACTION_GIVE_5_MINUTES"
         const val ACTION_DISMISS = "com.appssimple.alarmsimple.ACTION_DISMISS"
@@ -76,6 +77,7 @@ class AlarmFiringService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action
+        val isFailsafe = intent?.getBooleanExtra(EXTRA_IS_FAILSAFE, false) ?: false
         val alarmId = intent?.getLongExtra(EXTRA_ALARM_ID, -1L) ?: -1L
         if (alarmId != -1L) currentAlarmId = alarmId
 
@@ -84,7 +86,7 @@ class AlarmFiringService : Service() {
             ACTION_DISMISS -> dismissAlarm()
             ACTION_SNOOZE -> handleSnooze()
             else -> {
-                if (currentAlarmId > 0) {
+                if (currentAlarmId > 0 || isFailsafe) {
                     startAlarmPlayback(currentAlarmId)
                 } else {
                     stopSelf()
@@ -111,8 +113,7 @@ class AlarmFiringService : Service() {
             }
 
             // Будильник приложения успешно сработал -> отключаем системный предохранитель
-            alarmScheduler.dismissSystemBackupAlarm("AlarmSimple (Предохранитель)")
-            alarmScheduler.dismissSystemBackupAlarm("Страховка: AlarmSimple")
+            alarmScheduler.dismissSystemBackupAlarm()
 
             playAlarmSound(alarm?.ringtoneUri)
         }

@@ -260,7 +260,7 @@ class AlarmSetupViewModel @Inject constructor(
                     // Если включен предохранитель в настройках — ставим системный будильник на +5 минут
                     val isBackupAlarmEnabled = userPreferences.backupSystemAlarmEnabled.first()
                     if (isBackupAlarmEnabled) {
-                        alarmScheduler.setSystemBackupAlarm(targetTimeMs, "Страховка: AlarmSimple")
+                        alarmScheduler.setSystemBackupAlarm(targetTimeMs)
                     }
 
                     // Армируем напоминание об анализе сна (ставится только если включено в настройках)

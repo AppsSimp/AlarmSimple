@@ -390,7 +390,7 @@ fun AlarmListScreen(
                             }
                         )
 
-                        val isSwipingAlarm = dismissState.targetValue != SwipeToDismissBoxValue.Settled || dismissState.progress > 0.05f
+                        val isSwipingAlarm = dismissState.dismissDirection == SwipeToDismissBoxValue.EndToStart
                         SwipeToDismissBox(
                             state = dismissState,
                             enableDismissFromStartToEnd = false,
@@ -406,6 +406,8 @@ fun AlarmListScreen(
                                     ) {
                                         Icon(Icons.Default.Delete, contentDescription = "Удалить", tint = Color.White)
                                     }
+                                } else {
+                                    Box(modifier = Modifier.fillMaxSize())
                                 }
                             }
                         ) {
@@ -676,13 +678,12 @@ fun AlarmItemCard(
     val borderColor = when {
         isSelected -> BrandPrimary
         alarm.isActive -> MaterialTheme.colorScheme.outlineVariant
-        else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.3f)
+        else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
     }
 
     val backgroundColor = when {
         isSelected -> BrandPrimary.copy(alpha = 0.12f)
-        alarm.isActive -> MaterialTheme.colorScheme.surface
-        else -> MaterialTheme.colorScheme.surface.copy(alpha = 0.6f)
+        else -> MaterialTheme.colorScheme.surface
     }
 
     ModernCard(
@@ -716,7 +717,7 @@ fun AlarmItemCard(
                         Text(
                             text = alarm.label,
                             style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = if (alarm.isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
                             fontWeight = FontWeight.Bold
                         )
                         Spacer(Modifier.height(2.dp))
@@ -771,7 +772,7 @@ fun AlarmItemCard(
                         Text(
                             text = daysText,
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.primary,
+                            color = if (alarm.isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
                             fontWeight = FontWeight.Medium
                         )
                         Spacer(Modifier.height(4.dp))
@@ -785,7 +786,10 @@ fun AlarmItemCard(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         if (alarm.smartWakeEnabled) {
-                            ModernBadge(text = "Умное окно: ±${alarm.smartWakeWindowMinutes}м", color = BrandPrimary)
+                            ModernBadge(
+                                text = "Умное окно: ±${alarm.smartWakeWindowMinutes}м",
+                                color = if (alarm.isActive) BrandPrimary else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
+                            )
                         }
                         if (alarm.questType != "NONE") {
                             val questLabel = when (alarm.questType) {
@@ -794,7 +798,10 @@ fun AlarmItemCard(
                                 "MATH" -> "Математика"
                                 else -> alarm.questType
                             }
-                            ModernBadge(text = "Задачи: $questLabel", color = BrandSecondary)
+                            ModernBadge(
+                                text = "Задачи: $questLabel",
+                                color = if (alarm.isActive) BrandSecondary else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
+                            )
                         }
                     }
                 }

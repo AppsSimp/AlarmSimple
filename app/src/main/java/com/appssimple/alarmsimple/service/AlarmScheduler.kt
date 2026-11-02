@@ -10,6 +10,7 @@ import com.appssimple.alarmsimple.data.preferences.UserPreferences
 import com.appssimple.alarmsimple.receiver.AlarmReceiver
 import com.appssimple.alarmsimple.ui.MainActivity
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.firstOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -99,39 +100,58 @@ class AlarmScheduler @Inject constructor(
         return calendar.timeInMillis
     }
 
+    companion object {
+        const val FAILSAFE_ALARM_ID = 999999L
+        const val ACTION_FIRE_FAILSAFE = "com.appssimple.alarmsimple.ACTION_FIRE_FAILSAFE"
+        const val BACKUP_ALARM_LABEL = "AlarmSimple (Предохранитель)"
+    }
+
     /**
-     * Ставит страховочный системный будильник через стандартный Android AlarmClock Intent (+5 минут).
+     * Ставит страховочный системный будильник (+5 минут).
+     * 1. Внутренний аппаратный RTC будильник в Android AlarmManager (гарантия пробуждения устройства).
+     * 2. Системный будильник в стандартных часах Android (ACTION_SET_ALARM).
+     * Гарантирует, что пользователя НЕ выкинет из AlarmSimple (или мгновенно возвращает его назад).
      */
-    fun setSystemBackupAlarm(triggerTimeMs: Long, label: String = "AlarmSimple (Предохранитель)") {
+    fun setSystemBackupAlarm(triggerTimeMs: Long, label: String = BACKUP_ALARM_LABEL) {
+        val backupTimeMs = triggerTimeMs + 5 * 60_000L
+        val backupCal = java.util.Calendar.getInstance().apply {
+            timeInMillis = backupTimeMs
+        }
+
+        // 1. Аппаратный предохранитель в AlarmManager
+        scheduleInternalFailsafe(backupTimeMs)
+
+        // 2. Системный предохранитель в стандартных часах Android
         try {
-            val backupCal = java.util.Calendar.getInstance().apply {
-                timeInMillis = triggerTimeMs + 5 * 60_000L
-            }
             val intent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM).apply {
                 putExtra(android.provider.AlarmClock.EXTRA_MESSAGE, label)
                 putExtra(android.provider.AlarmClock.EXTRA_HOUR, backupCal.get(java.util.Calendar.HOUR_OF_DAY))
                 putExtra(android.provider.AlarmClock.EXTRA_MINUTES, backupCal.get(java.util.Calendar.MINUTE))
                 putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
+                putExtra(android.provider.AlarmClock.EXTRA_VIBRATE, true)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION
             }
+
+            val clockPackage = findSystemClockPackage()
+            if (clockPackage != null) {
+                intent.setPackage(clockPackage)
+            }
+
             context.startActivity(intent)
 
-            // Сразу возвращаем AlarmSimple на передний план, чтобы системное приложение часов не мелькало
-            try {
-                val bringBackIntent = Intent(context, com.appssimple.alarmsimple.ui.MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION
-                }
-                context.startActivity(bringBackIntent)
-            } catch (ignored: Exception) {}
+            // Защита от вылета: мгновенно возвращаем AlarmSimple на передний план
+            bringAppToFront()
         } catch (e: Exception) {
             e.printStackTrace()
         }
     }
 
     /**
-     * Отключает системный будильник, когда будильник приложения благополучно сработал.
+     * Отключает системный будильник, когда будильник приложения благополучно сработал или отключен.
      */
-    fun dismissSystemBackupAlarm(label: String = "AlarmSimple (Предохранитель)") {
+    fun dismissSystemBackupAlarm(label: String = BACKUP_ALARM_LABEL) {
+        cancelInternalFailsafe()
+
         try {
             val intent = Intent(android.provider.AlarmClock.ACTION_DISMISS_ALARM).apply {
                 putExtra(android.provider.AlarmClock.EXTRA_ALARM_SEARCH_MODE, android.provider.AlarmClock.ALARM_SEARCH_MODE_LABEL)
@@ -139,23 +159,125 @@ class AlarmScheduler @Inject constructor(
                 putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION
             }
+            val clockPackage = findSystemClockPackage()
+            if (clockPackage != null) {
+                intent.setPackage(clockPackage)
+            }
             context.startActivity(intent)
 
-            try {
-                val bringBackIntent = Intent(context, com.appssimple.alarmsimple.ui.MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or Intent.FLAG_ACTIVITY_NO_ANIMATION
-                }
-                context.startActivity(bringBackIntent)
-            } catch (ignored: Exception) {}
+            bringAppToFront()
         } catch (e: Exception) {
-            // Запасной вариант без параметров, если производитель не поддерживает фильтрацию по лейблу
             try {
                 val fallbackIntent = Intent(android.provider.AlarmClock.ACTION_DISMISS_ALARM).apply {
                     putExtra(android.provider.AlarmClock.EXTRA_SKIP_UI, true)
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_ANIMATION
+                }
+                val clockPackage = findSystemClockPackage()
+                if (clockPackage != null) {
+                    fallbackIntent.setPackage(clockPackage)
                 }
                 context.startActivity(fallbackIntent)
+                bringAppToFront()
             } catch (ignored: Exception) {}
+        }
+    }
+
+    private fun findSystemClockPackage(): String? {
+        try {
+            val testIntent = Intent(android.provider.AlarmClock.ACTION_SET_ALARM)
+            val matches = context.packageManager.queryIntentActivities(
+                testIntent,
+                android.content.pm.PackageManager.MATCH_DEFAULT_ONLY
+            )
+            if (matches.isEmpty()) return null
+
+            val systemMatch = matches.firstOrNull {
+                val appInfo = it.activityInfo.applicationInfo
+                (appInfo.flags and android.content.pm.ApplicationInfo.FLAG_SYSTEM) != 0
+            }
+            return systemMatch?.activityInfo?.packageName ?: matches.firstOrNull()?.activityInfo?.packageName
+        } catch (e: Exception) {
+            return null
+        }
+    }
+
+    private fun bringAppToFront() {
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Main).launch {
+            kotlinx.coroutines.delay(250)
+            launchBringBackIntent()
+            kotlinx.coroutines.delay(400)
+            launchBringBackIntent()
+        }
+    }
+
+    private fun launchBringBackIntent() {
+        try {
+            val bringBackIntent = Intent(context, com.appssimple.alarmsimple.ui.MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                        Intent.FLAG_ACTIVITY_REORDER_TO_FRONT or
+                        Intent.FLAG_ACTIVITY_SINGLE_TOP or
+                        Intent.FLAG_ACTIVITY_NO_ANIMATION
+            }
+            context.startActivity(bringBackIntent)
+        } catch (ignored: Exception) {}
+    }
+
+    private fun scheduleInternalFailsafe(triggerTimeMs: Long) {
+        try {
+            val receiverIntent = Intent(context, AlarmReceiver::class.java).apply {
+                action = ACTION_FIRE_FAILSAFE
+            }
+            val operationPendingIntent = PendingIntent.getBroadcast(
+                context,
+                FAILSAFE_ALARM_ID.toInt(),
+                receiverIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val showIntent = Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+            val showPendingIntent = PendingIntent.getActivity(
+                context,
+                FAILSAFE_ALARM_ID.toInt(),
+                showIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerTimeMs, showPendingIntent)
+            alarmManager.setAlarmClock(alarmClockInfo, operationPendingIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun cancelInternalFailsafe() {
+        try {
+            val receiverIntent = Intent(context, AlarmReceiver::class.java).apply {
+                action = ACTION_FIRE_FAILSAFE
+            }
+            val operationPendingIntent = PendingIntent.getBroadcast(
+                context,
+                FAILSAFE_ALARM_ID.toInt(),
+                receiverIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.cancel(operationPendingIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    fun syncBackupAlarmState(enabled: Boolean) {
+        if (!enabled) {
+            dismissSystemBackupAlarm()
+            return
+        }
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            val activeAlarms = alarmDao.getActiveAlarms().firstOrNull() ?: emptyList()
+            val validAlarms = activeAlarms.filter { it.isActive && it.targetTimeMs != null }
+            val nearest = validAlarms.minByOrNull { it.targetTimeMs ?: Long.MAX_VALUE }
+            if (nearest?.targetTimeMs != null && nearest.targetTimeMs > System.currentTimeMillis()) {
+                setSystemBackupAlarm(nearest.targetTimeMs)
+            }
         }
     }
 

@@ -73,7 +73,7 @@ class AlarmListViewModel @Inject constructor(
 
                     val isBackupEnabled = userPreferences.backupSystemAlarmEnabled.first()
                     if (isBackupEnabled) {
-                        alarmScheduler.setSystemBackupAlarm(nextTrigger, "AlarmSimple (${alarm.label.ifEmpty { "Будильник" }})")
+                        alarmScheduler.setSystemBackupAlarm(nextTrigger)
                     }
 
                     // Включение будильника может быть единственным активным — армируем напоминание
@@ -82,7 +82,7 @@ class AlarmListViewModel @Inject constructor(
                     alarmScheduler.cancelAlarm(alarm.id)
                     val isBackupEnabled = userPreferences.backupSystemAlarmEnabled.first()
                     if (isBackupEnabled) {
-                        alarmScheduler.dismissSystemBackupAlarm("AlarmSimple (${alarm.label.ifEmpty { "Будильник" }})")
+                        alarmScheduler.dismissSystemBackupAlarm()
                     }
                 }
             }

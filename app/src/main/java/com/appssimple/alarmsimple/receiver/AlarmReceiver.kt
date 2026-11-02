@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import com.appssimple.alarmsimple.service.AlarmFiringService
+import com.appssimple.alarmsimple.service.AlarmScheduler
 import com.appssimple.alarmsimple.service.SleepTrackingService
 
 class AlarmReceiver : BroadcastReceiver() {
@@ -14,10 +15,12 @@ class AlarmReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        val isFailsafe = intent.action == AlarmScheduler.ACTION_FIRE_FAILSAFE
         val alarmId = intent.getLongExtra(SleepTrackingService.EXTRA_ALARM_ID, -1L)
 
         val serviceIntent = Intent(context, AlarmFiringService::class.java).apply {
             putExtra(AlarmFiringService.EXTRA_ALARM_ID, alarmId)
+            putExtra(AlarmFiringService.EXTRA_IS_FAILSAFE, isFailsafe)
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
