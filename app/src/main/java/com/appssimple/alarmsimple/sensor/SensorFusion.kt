@@ -68,6 +68,12 @@ class SensorFusion @Inject constructor(
     // Adaptive thresholding: history of movement intensities during this session
     private val sessionMovementHistory = mutableListOf<Float>()
 
+    // REM bout tracking and phase continuity
+    private var currentSleepPhase: SleepPhase = SleepPhase.AWAKE
+    private var remEpochsInBout = 0
+    private var currentCycleIndex = -1
+    private var deepEpochsInCycle = 0
+
     fun start(sessionId: Long) {
         trackingStartTimeMs = System.currentTimeMillis()
         sleepOnsetTimeMs = null
@@ -76,6 +82,10 @@ class SensorFusion @Inject constructor(
         sleepConsecutiveStillEpochs = 0
         consecutiveMovingEpochs = 0
         isFinalWakeupDetected = false
+        currentSleepPhase = SleepPhase.AWAKE
+        remEpochsInBout = 0
+        currentCycleIndex = -1
+        deepEpochsInCycle = 0
         recentMovementWindow.clear()
         recentQuietStillEpochs.clear()
         synchronized(audioLock) {
@@ -178,8 +188,12 @@ class SensorFusion @Inject constructor(
         }
 
         // 2. Track Sleep Onset
-        // Quiet audio: silence, ambient room hum, steady breathing or snoring
-        val isQuiet = dominantAudio in listOf(AudioClass.SILENCE, AudioClass.AMBIENT, AudioClass.BREATHING, AudioClass.SNORE)
+        // Quiet audio: тишина, ровный фон, дыхание и звуки, которые случаются ВО СНЕ:
+        // храп, газы, скрежет зубами, судорожный вдох после апноэ
+        val isQuiet = dominantAudio in listOf(
+            AudioClass.SILENCE, AudioClass.AMBIENT, AudioClass.BREATHING,
+            AudioClass.SNORE, AudioClass.FLATULENCE, AudioClass.BRUXISM, AudioClass.GASP
+        )
         if (isQuiet) {
             consecutiveQuietEpochs++
         } else if (dominantAudio == AudioClass.SPEECH) {
@@ -218,7 +232,9 @@ class SensorFusion @Inject constructor(
             val deepStillSatisfied = consecutiveStillEpochs >= 24
 
             if (windowSatisfied || continuousSatisfied || deepStillSatisfied) {
-                val backdateEpochs = kotlin.math.max(consecutiveStillEpochs, 14)
+                // Бэктайминг максимум на 16 эпох (8 минут): consecutiveStillEpochs после
+                // гэп-бэкфилла может быть огромным — без ограничителя засыпание «уедет» в прошлое
+                val backdateEpochs = kotlin.math.min(kotlin.math.max(consecutiveStillEpochs, 14), 16)
                 sleepOnsetTimeMs = now - (backdateEpochs * 30_000L)
                 onsetDetectedThisEpoch = true
             }
@@ -290,6 +306,8 @@ class SensorFusion @Inject constructor(
             // Для повторного засыпания требуется честный 10-минутный штиль (>= 20 эпох).
             if (consecutiveStillEpochs < 20) {
                 sleepConsecutiveStillEpochs = 0
+                remEpochsInBout = 0
+                currentSleepPhase = SleepPhase.AWAKE
                 return SleepPhase.AWAKE
             } else {
                 // Пользователь действительно решил поспать еще (утренний сон)
@@ -299,23 +317,38 @@ class SensorFusion @Inject constructor(
 
         // --- 2. Ночное истинное пробуждение (WASO) ---
         // Требует:
-        // А) Мощный всплеск (подъем с кровати, поворот всем телом, телефон в руке: intensity >= 7.0 или maxDelta >= 2.0)
+        // А) Мощный всплеск (подъем с кровати, поворот всем телом, телефон в руке: intensity >= 8.0 или maxDelta >= 2.5)
         // Б) Непрерывное ворочание 2+ эпохи подряд (>= 60-90 сек непрерывных движений)
         // В) Голос (SPEECH)
-        val isMajorSpike = movement.movementIntensity >= 7.0f || movement.maxDelta >= 2.0f
+        val isMajorSpike = movement.movementIntensity >= 8.0f || movement.maxDelta >= 2.5f
         val isSustainedMotion = consecutiveMovingEpochs >= 2 && movement.movementIntensity >= 1.5f
         val isSpeech = audio == AudioClass.SPEECH
 
         if (isMajorSpike || isSustainedMotion || isSpeech) {
             sleepConsecutiveStillEpochs = 0
+            remEpochsInBout = 0
+            currentSleepPhase = SleepPhase.AWAKE
             return SleepPhase.AWAKE
         }
 
-        // --- 3. Шевеления и микродвижения во сне -> LIGHT (а не AWAKE!) ---
-        // Смена позы, движение ногой, дыхание (0.08 <= intensity < 7.0) — это нормальный
-        // поверхностный сон (N1/N2), а не пробуждение! Сбрасывает счетчик глубокого сна.
-        if (movement.movementIntensity >= 0.08f || movement.maxDelta >= 0.15f) {
+        // --- 3. Шевеления, микродвижения и гистерезис фазы REM ---
+        val isStill = !movement.isUserMoving && movement.movementIntensity < 0.08f && movement.maxDelta < 0.15f
+        // Физиологические микродвижения (миоклонические подергивания) во время REM
+        val isTwitch = (movement.movementIntensity in 0.08f..0.59f) && (movement.maxDelta < 0.40f)
+
+        if (currentSleepPhase == SleepPhase.REM && remEpochsInBout < 30 && (isStill || isTwitch)) {
+            // Удерживаем фазу REM при микродвижениях
+            remEpochsInBout++
+            sleepConsecutiveStillEpochs++
+            return SleepPhase.REM
+        } else {
+            remEpochsInBout = 0
+        }
+
+        // Если не полный покой и не REM — выходим в LIGHT
+        if (!isStill) {
             sleepConsecutiveStillEpochs = 0
+            currentSleepPhase = SleepPhase.LIGHT
             return SleepPhase.LIGHT
         }
 
@@ -323,37 +356,54 @@ class SensorFusion @Inject constructor(
         sleepConsecutiveStillEpochs++
 
         val cyclePosition = ((minutesSinceOnset % 90) / 90f) // Позиция в 90-мин ультрадианном цикле [0.0, 1.0]
+        val cycleIndex = minutesSinceOnset / 90
+        if (cycleIndex != currentCycleIndex) {
+            currentCycleIndex = cycleIndex
+            deepEpochsInCycle = 0
+        }
 
-        // Начальные 15 минут после засыпания — строго LIGHT (N1/N2)
-        if (minutesSinceOnset < 15) {
+        // Начальные 5 минут после засыпания — строго LIGHT (N1/N2 переход)
+        if (minutesSinceOnset < 5) {
+            currentSleepPhase = SleepPhase.LIGHT
             return SleepPhase.LIGHT
         }
 
-        // Барьер покоя: не менее 12 эпох (6 минут тишины) после любого движения перед DEEP/REM
-        if (sleepConsecutiveStillEpochs < 12) {
-            return SleepPhase.LIGHT
+        // --- 5. DEEP (Глубокий медленноволновой сон, N3) ---
+        // Бюджет глубокого сна уменьшается к утру (биология сна):
+        // Цикл 0: до 25 мин (50 эпох), Цикл 1: до 20 мин (40 эпох), Цикл 2: до 12 мин (24 эпохи), Цикл 3+: 0 мин
+        val maxDeepInCycle = when (cycleIndex) {
+            0 -> 50
+            1 -> 40
+            2 -> 24
+            else -> 0
         }
+        val deepStillThresh = if (cycleIndex == 0) 8 else 10
+        val isDeepEligible = deepEpochsInCycle < maxDeepInCycle &&
+                sleepConsecutiveStillEpochs >= deepStillThresh &&
+                cyclePosition < 0.60f &&
+                minutesSinceOnset < 240
+        val isSnoringDeep = audio == AudioClass.SNORE && deepEpochsInCycle < maxDeepInCycle &&
+                sleepConsecutiveStillEpochs >= 8 && cyclePosition < 0.60f && minutesSinceOnset < 240
 
-        // --- 5. DEEP (Глубокий сон, N3) ---
-        // Доминирует в первые 4 часа ночи и в первой половине 90-мин цикла (< 0.60)
-        val isEarlyInCycle = cyclePosition < 0.60f
-        val isEarlyHours = minutesSinceOnset < 240
-        val isDeepCandidate = sleepConsecutiveStillEpochs >= 12 && isEarlyInCycle && isEarlyHours
-        val isSnoringDeep = audio == AudioClass.SNORE && sleepConsecutiveStillEpochs >= 8 && isEarlyInCycle
-
-        if (isDeepCandidate || isSnoringDeep) {
+        if (isDeepEligible || isSnoringDeep) {
+            deepEpochsInCycle++
+            currentSleepPhase = SleepPhase.DEEP
             return SleepPhase.DEEP
         }
 
         // --- 6. REM (Быстрый сон, сновидения) ---
-        // Доминирует под утро (> 180 мин) во второй половине 90-мин цикла (>= 0.65)
-        val isLateInCycle = cyclePosition >= 0.65f
-        val isLateInNight = minutesSinceOnset >= 180
-        if (isLateInCycle && isLateInNight && sleepConsecutiveStillEpochs >= 16) {
+        // Доминирует во второй половине ночи (> 140 мин) во 2-й половине цикла, либо под утро (> 240 мин)
+        val isRemTiming = (minutesSinceOnset >= 140 && cyclePosition >= 0.58f) ||
+                (minutesSinceOnset >= 240 && cyclePosition >= 0.45f)
+
+        if (isRemTiming && sleepConsecutiveStillEpochs >= 10) {
+            remEpochsInBout = 1
+            currentSleepPhase = SleepPhase.REM
             return SleepPhase.REM
         }
 
         // Базовый сон: LIGHT (Основной сон)
+        currentSleepPhase = SleepPhase.LIGHT
         return SleepPhase.LIGHT
     }
 }

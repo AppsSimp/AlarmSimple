@@ -57,8 +57,18 @@ class SleepStatsViewModel @Inject constructor(
                 sleepSessionDao.getLatestValidSession()
             } ?: return@launch
 
-            val epochs = sleepEpochDao.getEpochsForSessionOnce(session.id)
+            val allEpochs = sleepEpochDao.getEpochsForSessionOnce(session.id)
             val snippets = audioSnippetDao.getSnippetsForSessionOnce(session.id)
+
+            // Эпохи ДО засыпания — это не «пробуждения», человек ещё просто не уснул.
+            // Гипнограмма и статистика фаз начинаются с момента засыпания (sleepOnsetMs).
+            val sinceOnset = session.sleepOnsetMs?.let { onset ->
+                allEpochs.filter { it.timestampMs >= onset }
+            } ?: allEpochs
+
+            // Микро-«пробуждения» короче 3 эпох (90 сек) — это шевеления, а не просыпания.
+            // На графике и в статистике фаз склеиваем их с окружающим сном (LIGHT).
+            val epochs = smoothShortAwakenings(sinceOnset)
 
             val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
             val onsetStr = session.sleepOnsetMs?.let { timeFormat.format(Date(it)) } ?: "--:--"
@@ -102,8 +112,39 @@ class SleepStatsViewModel @Inject constructor(
         }
     }
 
-    fun toggleAudioSnippet(snippet: AudioSnippetEntity) {
-        if (_uiState.value.playingSnippetId == snippet.id) {
+    /**
+     * Серии AWAKE короче 3 эпох (90 сек) заменяем на LIGHT — это микрошевеления во сне,
+     * а не реальные пробуждения. Реальные подъёмы (3+ минуты) остаются как есть.
+     */
+    private fun smoothShortAwakenings(epochs: List<SleepEpochEntity>): List<SleepEpochEntity> {
+        if (epochs.size < 2) return epochs
+        val result = mutableListOf<SleepEpochEntity>()
+        var i = 0
+        while (i < epochs.size) {
+            val epoch = epochs[i]
+            if (epoch.phase != SleepPhase.AWAKE.name) {
+                result.add(epoch)
+                i++
+                continue
+            }
+            // Длина серии AWAKE, начиная с i
+            var runEnd = i
+            while (runEnd < epochs.size && epochs[runEnd].phase == SleepPhase.AWAKE.name) runEnd++
+            val runLength = runEnd - i
+            if (runLength >= 3) {
+                result.addAll(epochs.subList(i, runEnd))
+            } else {
+                // Короткая серия -> LIGHT, но с исходной интенсивностью движения
+                for (j in i until runEnd) {
+                    result.add(epochs[j].copy(phase = SleepPhase.LIGHT.name))
+                }
+            }
+            i = runEnd
+        }
+        return result
+    }
+
+    fun toggleAudioSnippet(snippet: AudioSnippetEntity) {        if (_uiState.value.playingSnippetId == snippet.id) {
             stopAudioPlayback()
         } else {
             playAudioSnippet(snippet)

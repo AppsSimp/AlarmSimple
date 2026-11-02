@@ -12,6 +12,7 @@ class AlarmSimpleApp : Application() {
     companion object {
         const val CHANNEL_ALARM = "alarm_ringing"
         const val CHANNEL_SLEEP_TRACKING = "sleep_tracking"
+        const val CHANNEL_SLEEP_REMINDER = "sleep_reminder"
     }
 
     override fun onCreate() {
@@ -50,8 +51,18 @@ class AlarmSimpleApp : Application() {
             setSound(null, null)
         }
 
+        // Sleep reminder channel — напоминание включить анализ сна перед сном
+        val reminderChannel = NotificationChannel(
+            CHANNEL_SLEEP_REMINDER,
+            "Напоминание об анализе сна",
+            NotificationManager.IMPORTANCE_DEFAULT
+        ).apply {
+            description = "Уведомление за несколько часов до будильника: включить запись сна с микрофоном."
+            enableVibration(true)
+        }
+
         notificationManager.createNotificationChannels(
-            listOf(alarmChannel, trackingChannel)
+            listOf(alarmChannel, trackingChannel, reminderChannel)
         )
     }
 }

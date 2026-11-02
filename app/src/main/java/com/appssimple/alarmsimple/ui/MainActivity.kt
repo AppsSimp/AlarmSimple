@@ -39,13 +39,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.navigation.compose.rememberNavController
+import androidx.lifecycle.lifecycleScope
 import com.appssimple.alarmsimple.data.preferences.UserPreferences
 import com.appssimple.alarmsimple.ui.components.AppBackground
 import com.appssimple.alarmsimple.ui.navigation.AppNavHost
 import com.appssimple.alarmsimple.ui.navigation.Screen
 import com.appssimple.alarmsimple.ui.theme.AlarmSimpleTheme
 import dagger.hilt.android.AndroidEntryPoint
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -53,6 +56,9 @@ class MainActivity : ComponentActivity() {
 
     @Inject
     lateinit var userPreferences: UserPreferences
+
+    @Inject
+    lateinit var alarmScheduler: com.appssimple.alarmsimple.service.AlarmScheduler
 
     override fun onResume() {
         super.onResume()
@@ -74,9 +80,55 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /**
+     * Запуск по тапу на уведомление-напоминание: приложение на экране, поэтому сервис
+     * можно поднять с микрофоном (Android 14+ блокирует микрофон фоновым запускам).
+     */
+    private fun maybeStartTrackingFromReminder(intent: android.content.Intent?) {
+        if (intent?.getBooleanExtra(
+                com.appssimple.alarmsimple.service.SleepTrackingService.EXTRA_AUTO_START_TRACKING,
+                false
+            ) != true
+        ) return
+        if (com.appssimple.alarmsimple.service.SleepTrackingService.isTracking.value) return
+
+        val alarmId = intent.getLongExtra(
+            com.appssimple.alarmsimple.service.SleepTrackingService.EXTRA_ALARM_ID,
+            com.appssimple.alarmsimple.service.SleepTrackingService.NO_ALARM_ID
+        )
+        val serviceIntent = android.content.Intent(
+            this,
+            com.appssimple.alarmsimple.service.SleepTrackingService::class.java
+        ).apply {
+            action = com.appssimple.alarmsimple.service.SleepTrackingService.ACTION_START_TRACKING
+            putExtra(
+                com.appssimple.alarmsimple.service.SleepTrackingService.EXTRA_ALARM_ID,
+                alarmId
+            )
+        }
+        try {
+            androidx.core.content.ContextCompat.startForegroundService(this, serviceIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         checkAndRedirectIfRinging()
+        maybeStartTrackingFromReminder(intent)
+
+        // Самолечение: Android стирает AlarmManager-алармы при обновлении APK и принудительной
+        // остановке приложения. При каждом холодном старте восстанавливаем будильники и цепочку
+        // напоминаний об анализе сна из БД.
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                alarmScheduler.rescheduleAllAlarms()
+                alarmScheduler.ensureSleepReminderScheduled()
+            } catch (ignored: Exception) {
+            }
+        }
+
         enableEdgeToEdge()
 
         setContent {

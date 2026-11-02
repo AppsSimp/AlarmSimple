@@ -19,6 +19,9 @@ class SilentAudioPlayer @Inject constructor() {
     private var isPlaying = false
     private var audioTrack: AudioTrack? = null
 
+    val isSilentPlaying: Boolean
+        get() = isPlaying
+
     @Synchronized
     fun start() {
         if (isPlaying) return

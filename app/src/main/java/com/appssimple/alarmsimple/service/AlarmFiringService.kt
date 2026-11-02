@@ -47,6 +47,7 @@ class AlarmFiringService : Service() {
     private var isSirenEnabled = false
     private var isVolumeLockEnabled = false
     private var volumeObserver: VolumeObserver? = null
+    private var hasBeenDismissed = false
 
     private var questTimerJob: Job? = null
     private var volumeRampJob: Job? = null
@@ -243,15 +244,18 @@ class AlarmFiringService : Service() {
             val snoozeMinutes = alarm?.snoozeDurationMinutes ?: 5
             val snoozeTimeMs = System.currentTimeMillis() + (snoozeMinutes * 60_000L)
 
-            // Reschedule via scheduler and dismiss current
-            val scheduler = AlarmScheduler(this@AlarmFiringService)
-            scheduler.scheduleAlarm(snoozeTimeMs, currentAlarmId)
+            alarmScheduler.scheduleAlarm(snoozeTimeMs, currentAlarmId)
 
             dismissAlarm()
         }
     }
 
     private fun dismissAlarm() {
+        // Гвардия: dismissAlarm вызывается и вручную, и из onDestroy —
+        // без неё планирование повтора выполнялось бы дважды.
+        if (hasBeenDismissed) return
+        hasBeenDismissed = true
+
         _isRinging.value = false
         val firingAlarmId = currentAlarmId
         _ringingAlarmId.value = -1L
@@ -280,7 +284,9 @@ class AlarmFiringService : Service() {
 
         // Handle alarm recurrence or deactivation synchronously before stopSelf
         if (firingAlarmId > 0) {
-            serviceScope.launch {
+            // NonCancellable: если систему убьёт сервис сразу после dismiss (onDestroy -> scope.cancel()),
+            // планирование следующего срабатывания всё равно выполнится до конца.
+            serviceScope.launch(Dispatchers.IO + NonCancellable) {
                 try {
                     val alarm = alarmDao.getAlarmById(firingAlarmId)
                     if (alarm != null) {
@@ -365,7 +371,10 @@ class AlarmFiringService : Service() {
     }
 
     override fun onDestroy() {
-        dismissAlarm()
+        // Если сервис убит системой во время звонка — корректно завершаем и планируем повтор.
+        if (!hasBeenDismissed) {
+            dismissAlarm()
+        }
         serviceScope.cancel()
         super.onDestroy()
     }

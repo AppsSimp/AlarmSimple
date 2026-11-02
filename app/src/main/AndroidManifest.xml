@@ -100,21 +100,22 @@
             </intent-filter>
         </receiver>
         
-        <!-- Boot Receiver -->
+        <!-- Boot Receiver: восстановление будильников после загрузки и обновления APK -->
         <receiver
             android:name=".receiver.BootReceiver"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
             </intent-filter>
         </receiver>
 
-        <!-- Auto Sleep Check Receiver -->
+        <!-- Sleep Reminder Receiver: напоминание включить анализ сна за N часов до будильника -->
         <receiver
-            android:name=".receiver.AutoSleepCheckReceiver"
+            android:name=".receiver.SleepReminderReceiver"
             android:exported="false">
             <intent-filter>
-                <action android:name="com.appssimple.alarmsimple.ACTION_CHECK_AUTO_SLEEP" />
+                <action android:name="com.appssimple.alarmsimple.ACTION_SLEEP_REMINDER_CHECK" />
             </intent-filter>
         </receiver>
 

@@ -4,15 +4,21 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import com.appssimple.alarmsimple.data.db.dao.AlarmDao
+import com.appssimple.alarmsimple.domain.model.AlarmMode
+import com.appssimple.alarmsimple.data.preferences.UserPreferences
 import com.appssimple.alarmsimple.receiver.AlarmReceiver
 import com.appssimple.alarmsimple.ui.MainActivity
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.flow.firstOrNull
 import javax.inject.Inject
 import javax.inject.Singleton
 
 @Singleton
 class AlarmScheduler @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val alarmDao: AlarmDao,
+    private val userPreferences: UserPreferences
 ) {
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
@@ -166,12 +172,12 @@ class AlarmScheduler @Inject constructor(
         alarmManager.cancel(operationPendingIntent)
     }
 
-    fun scheduleAutoSleepCheckAt(triggerTimeMs: Long) {
+    fun scheduleSleepReminderAt(triggerTimeMs: Long) {
         try {
             val now = System.currentTimeMillis()
             val target = if (triggerTimeMs < now + 60_000L) now + 60_000L else triggerTimeMs
-            val intent = Intent(context, com.appssimple.alarmsimple.receiver.AutoSleepCheckReceiver::class.java).apply {
-                action = com.appssimple.alarmsimple.receiver.AutoSleepCheckReceiver.ACTION_CHECK_AUTO_SLEEP
+            val intent = Intent(context, com.appssimple.alarmsimple.receiver.SleepReminderReceiver::class.java).apply {
+                action = com.appssimple.alarmsimple.receiver.SleepReminderReceiver.ACTION_SLEEP_REMINDER_CHECK
             }
             val pendingIntent = PendingIntent.getBroadcast(
                 context,
@@ -189,10 +195,10 @@ class AlarmScheduler @Inject constructor(
         }
     }
 
-    fun cancelAutoSleepCheck() {
+    fun cancelSleepReminder() {
         try {
-            val intent = Intent(context, com.appssimple.alarmsimple.receiver.AutoSleepCheckReceiver::class.java).apply {
-                action = com.appssimple.alarmsimple.receiver.AutoSleepCheckReceiver.ACTION_CHECK_AUTO_SLEEP
+            val intent = Intent(context, com.appssimple.alarmsimple.receiver.SleepReminderReceiver::class.java).apply {
+                action = com.appssimple.alarmsimple.receiver.SleepReminderReceiver.ACTION_SLEEP_REMINDER_CHECK
             }
             val pendingIntent = PendingIntent.getBroadcast(
                 context,
@@ -201,6 +207,69 @@ class AlarmScheduler @Inject constructor(
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
             alarmManager.cancel(pendingIntent)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * Полное восстановление всех активных будильников из БД.
+     * Протухшие повторяющиеся будильники пересчитываются на следующее срабатывание,
+     * разовые в прошлом деактивируются. Вызывается после загрузки телефона, обновления
+     * APK (Android стирает все AlarmManager-алармы) и при открытии приложения.
+     */
+    suspend fun rescheduleAllAlarms() {
+        try {
+            val activeAlarms = alarmDao.getActiveAlarms().firstOrNull() ?: emptyList()
+            val now = System.currentTimeMillis()
+
+            for (alarm in activeAlarms) {
+                if (alarm.mode == AlarmMode.CLASSIC.name && alarm.targetTimeMs != null) {
+                    val repeatDays = runCatching {
+                        val arr = org.json.JSONArray(alarm.repeatDays)
+                        (0 until arr.length()).map { arr.getInt(it) }.toSet()
+                    }.getOrDefault(emptySet())
+
+                    val target = if (alarm.targetTimeMs > now) {
+                        alarm.targetTimeMs
+                    } else if (repeatDays.isNotEmpty()) {
+                        val cal = java.util.Calendar.getInstance().apply { timeInMillis = alarm.targetTimeMs }
+                        val next = calculateNextTriggerTime(
+                            hour = cal.get(java.util.Calendar.HOUR_OF_DAY),
+                            minute = cal.get(java.util.Calendar.MINUTE),
+                            repeatDays = repeatDays,
+                            repeatIntervalWeeks = alarm.repeatIntervalWeeks
+                        )
+                        alarmDao.updateAlarm(alarm.copy(targetTimeMs = next, isActive = true))
+                        next
+                    } else {
+                        // Разовый будильник в прошлом — выключаем
+                        alarmDao.setAlarmActive(alarm.id, false)
+                        null
+                    }
+
+                    if (target != null) {
+                        scheduleAlarm(target, alarm.id)
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    /**
+     * Армирует проверку-напоминание об анализе сна через минуту (если включено в настройках).
+     * Приёмник сам выстроит дальнейшую цепочку. Безопасно вызывать повторно.
+     */
+    suspend fun ensureSleepReminderScheduled() {
+        try {
+            val enabled = userPreferences.autoSleepTrackingEnabled.firstOrNull() ?: false
+            if (enabled) {
+                scheduleSleepReminderAt(System.currentTimeMillis() + 60_000L)
+            } else {
+                cancelSleepReminder()
+            }
         } catch (e: Exception) {
             e.printStackTrace()
         }

@@ -263,8 +263,8 @@ class AlarmSetupViewModel @Inject constructor(
                         alarmScheduler.setSystemBackupAlarm(targetTimeMs, "Страховка: AlarmSimple")
                     }
 
-                    // Проверяем авто-трекинг сна
-                    alarmScheduler.scheduleAutoSleepCheckAt(System.currentTimeMillis() + 60_000L)
+                    // Армируем напоминание об анализе сна (ставится только если включено в настройках)
+                    alarmScheduler.ensureSleepReminderScheduled()
                 }
 
                 _uiState.update { it.copy(isSaving = false) }

@@ -52,6 +52,7 @@ fun SettingsScreen(
     val backupAlarmEnabled by viewModel.backupSystemAlarmEnabled.collectAsState(initial = false)
     val fakeApplePayEnabled by viewModel.fakeApplePayEnabled.collectAsState(initial = true)
     val autoSleepTrackingEnabled by viewModel.autoSleepTrackingEnabled.collectAsState(initial = false)
+    val sleepReminderHours by viewModel.sleepReminderHours.collectAsState(initial = 9)
 
     AppBackground {
         Scaffold(
@@ -169,16 +170,26 @@ fun SettingsScreen(
 
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Автозапуск трекинга сна", fontWeight = FontWeight.SemiBold)
+                                Text("Напоминание включить анализ сна", fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    "Автоматически включать ночной трекинг, если телефон лежит неподвижно в кровати в пределах 10 часов до будильника.",
+                                    "За N часов до будильника придёт уведомление — нажмите его, и начнётся полный анализ сна с микрофоном (храп, звуки). Автозапуск из фона отключён: Android запрещает микрофон фоновым приложениям.",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
+                                Spacer(Modifier.height(8.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    listOf(7, 8, 9, 10).forEach { hours ->
+                                        FilterChip(
+                                            selected = sleepReminderHours == hours,
+                                            onClick = { viewModel.setSleepReminderHours(hours) },
+                                            label = { Text("$hours ч") }
+                                        )
+                                    }
+                                }
                             }
                             Switch(checked = autoSleepTrackingEnabled, onCheckedChange = viewModel::setAutoSleepTrackingEnabled)
                         }
@@ -383,7 +394,8 @@ fun SettingsScreen(
 
 @HiltViewModel
 class SettingsViewModel @Inject constructor(
-    private val userPreferences: UserPreferences
+    private val userPreferences: UserPreferences,
+    private val alarmScheduler: com.appssimple.alarmsimple.service.AlarmScheduler
 ) : ViewModel() {
     val historyRetentionDays = userPreferences.historyRetentionDays
     val defaultSnoozeMinutes = userPreferences.defaultSnoozeMinutes
@@ -392,9 +404,27 @@ class SettingsViewModel @Inject constructor(
     val backupSystemAlarmEnabled = userPreferences.backupSystemAlarmEnabled
     val fakeApplePayEnabled = userPreferences.fakeApplePayEnabled
     val autoSleepTrackingEnabled = userPreferences.autoSleepTrackingEnabled
+    val sleepReminderHours = userPreferences.sleepReminderHours
 
     fun setAutoSleepTrackingEnabled(enabled: Boolean) {
-        viewModelScope.launch { userPreferences.setAutoSleepTrackingEnabled(enabled) }
+        viewModelScope.launch {
+            userPreferences.setAutoSleepTrackingEnabled(enabled)
+            // При включении сразу армируем напоминание, иначе цепочка запустилась бы
+            // только после следующего сохранения будильника или перезагрузки.
+            if (enabled) {
+                alarmScheduler.ensureSleepReminderScheduled()
+            } else {
+                alarmScheduler.cancelSleepReminder()
+            }
+        }
+    }
+
+    fun setSleepReminderHours(hours: Int) {
+        viewModelScope.launch {
+            userPreferences.setSleepReminderHours(hours)
+            // Смена окна напоминания — сразу пересчитать расписание
+            alarmScheduler.ensureSleepReminderScheduled()
+        }
     }
 
     fun setFakeApplePayEnabled(enabled: Boolean) {

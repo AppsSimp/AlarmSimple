@@ -376,8 +376,12 @@ fun AudioSnippetItemCard(
         "SNORE" -> "😴 Храп" to Color(0xFF38BDF8)
         "SLEEP_TALK" -> "💬 Разговор во сне" to Color(0xFFA78BFA)
         "COUGH_SNEEZE" -> "🤧 Кашель / чихание" to Color(0xFFFBBF24)
-        "IMPACT_NOISE" -> "💥 Ночной шум / удар" to Color(0xFFF87171)
+        "BRUXISM" -> "😬 Скрежет зубами" to Color(0xFFE879F9)
+        "APNEA_GASP" -> "😮 Резкий вдох (пауза дыхания)" to Color(0xFFFB7185)
+        "RUSTLING" -> "🛏️ Ворочание / шуршание" to Color(0xFF94A3B8)
+        "IMPACT_NOISE" -> "💥 Удар / хлопок" to Color(0xFFF87171)
         "FLATULENCE" -> "💨 Забавный звук" to Color(0xFF34D399)
+        "UNKNOWN" -> "❓ Неопознанный шум" to Color(0xFF818CF8)
         else -> "⚡ Необычный звук" to Color(0xFF818CF8)
     }
 

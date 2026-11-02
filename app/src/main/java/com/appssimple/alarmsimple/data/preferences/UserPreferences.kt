@@ -32,6 +32,8 @@ class UserPreferences @Inject constructor(
         val DEBUG_SLEEP_LOGGING_ENABLED = booleanPreferencesKey("debug_sleep_logging_enabled")
         val FAKE_APPLE_PAY_ENABLED = booleanPreferencesKey("fake_apple_pay_enabled")
         val AUTO_SLEEP_TRACKING_ENABLED = booleanPreferencesKey("auto_sleep_tracking_enabled")
+        val SLEEP_REMINDER_HOURS = intPreferencesKey("sleep_reminder_hours")
+        val SLEEP_REMINDER_LAST_SHOWN_MS = longPreferencesKey("sleep_reminder_last_shown_ms")
     }
     
     val testRingButtonsEnabled: Flow<Boolean> = context.dataStore.data
@@ -46,6 +48,13 @@ class UserPreferences @Inject constructor(
     val autoSleepTrackingEnabled: Flow<Boolean> = context.dataStore.data
         .map { it[AUTO_SLEEP_TRACKING_ENABLED] ?: false }
 
+    /** За сколько часов до будильника присылать напоминание включить анализ сна (7/8/9/10) */
+    val sleepReminderHours: Flow<Int> = context.dataStore.data
+        .map { it[SLEEP_REMINDER_HOURS] ?: 9 }
+
+    /** Когда последний раз показывали напоминание (защита от спама при каждом открытии приложения) */
+    val sleepReminderLastShownMs: Flow<Long> = context.dataStore.data
+        .map { it[SLEEP_REMINDER_LAST_SHOWN_MS] ?: 0L }
     val onboardingCompleted: Flow<Boolean> = context.dataStore.data
         .map { it[ONBOARDING_COMPLETED] ?: false }
 
@@ -117,5 +126,13 @@ class UserPreferences @Inject constructor(
 
     suspend fun setAutoSleepTrackingEnabled(enabled: Boolean) {
         context.dataStore.edit { it[AUTO_SLEEP_TRACKING_ENABLED] = enabled }
+    }
+
+    suspend fun setSleepReminderHours(hours: Int) {
+        context.dataStore.edit { it[SLEEP_REMINDER_HOURS] = hours }
+    }
+
+    suspend fun setSleepReminderLastShownMs(timestampMs: Long) {
+        context.dataStore.edit { it[SLEEP_REMINDER_LAST_SHOWN_MS] = timestampMs }
     }
 }

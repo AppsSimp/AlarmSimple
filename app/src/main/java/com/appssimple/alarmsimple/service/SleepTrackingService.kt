@@ -72,6 +72,12 @@ class SleepTrackingService : Service() {
         const val ACTION_HEARTBEAT = "com.appssimple.alarmsimple.ACTION_HEARTBEAT"
         const val EXTRA_ALARM_ID = "EXTRA_ALARM_ID"
 
+        /**
+         * Приложение запущено из уведомления-напоминания — можно сразу стартовать трекинг
+         * с микрофоном (приложение на экране, ограничений фона нет).
+         */
+        const val EXTRA_AUTO_START_TRACKING = "EXTRA_AUTO_START_TRACKING"
+
         /** Used when the user tracks sleep without configuring an alarm. */
         const val NO_ALARM_ID = -1L
 
@@ -113,6 +119,13 @@ class SleepTrackingService : Service() {
                         }
                     } catch (ignored: Exception) {}
                     com.appssimple.alarmsimple.receiver.SleepHeartbeatReceiver.scheduleNext(this)
+
+                    // Сторож: сессия не может длиться больше 14 часов. Если сервис пережил день
+                    // (не был остановлен), завершаем её — иначе появится фейковый «суточник».
+                    val startedAt = _trackingStartMs.value
+                    if (startedAt > 0 && System.currentTimeMillis() - startedAt > 14 * 3600_000L) {
+                        stopTracking()
+                    }
                 }
             }
             else -> stopSelf()
@@ -292,20 +305,21 @@ class SleepTrackingService : Service() {
             silentAudioPlayer.stop()
             sensorFusion.stop()
 
-            if (currentSessionId > 0) {
-                val existing = sleepSessionDao.getSessionById(currentSessionId)
-                if (existing != null) {
-                    val now = System.currentTimeMillis()
-                    val onset = existing.sleepOnsetMs
-                    val sleepDurationMs = if (onset != null) now - onset else 0L
+                if (currentSessionId > 0) {
+                    val existing = sleepSessionDao.getSessionById(currentSessionId)
+                    if (existing != null) {
+                        val now = System.currentTimeMillis()
+                        val onset = existing.sleepOnsetMs
+                        val sleepDurationMs = if (onset != null) now - onset else 0L
 
-                    // Если сна не было вовсе или реальный сон длился меньше 10 минут (600_000 мс) —
-                    // удаляем мусорную сессию и не засоряем статистику!
-                    if (onset == null || sleepDurationMs < 600_000L) {
-                        sleepEpochDao.deleteEpochsForSession(currentSessionId)
-                        audioSnippetDao.deleteSnippetsForSession(currentSessionId)
-                        sleepSessionDao.deleteSession(existing)
-                    } else if (existing.wakeUpMs == null) {
+                        // Если сна не было вовсе, реальный сон длился меньше 10 минут (600_000 мс)
+                        // или сессия длится дольше 14 часов (зависший сервис, фейковый «суточник») —
+                        // удаляем мусорную сессию и не засоряем статистику!
+                        if (onset == null || sleepDurationMs < 600_000L || sleepDurationMs > 14 * 3600_000L) {
+                            sleepEpochDao.deleteEpochsForSession(currentSessionId)
+                            audioSnippetDao.deleteSnippetsForSession(currentSessionId)
+                            sleepSessionDao.deleteSession(existing)
+                        } else if (existing.wakeUpMs == null) {
                         sleepSessionDao.updateSession(
                             existing.copy(
                                 wakeUpMs = now,
@@ -375,10 +389,34 @@ class SleepTrackingService : Service() {
             0
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIFICATION_ID, notification, serviceTypes)
-        } else {
-            startForeground(NOTIFICATION_ID, notification)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                startForeground(NOTIFICATION_ID, notification, serviceTypes)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+            }
+        } catch (e: Exception) {
+            // Android 14+ запрещает запускать FGS с типом microphone из фона (SecurityException),
+            // даже при автостарте по exact-alarm. Не падаем, а деградируем до mediaPlayback:
+            // трекинг движения по акселерометру, фазы сна и умное пробуждение продолжают работать,
+            // недоступно только прослушивание микрофона (храп) до следующего запуска из foreground.
+            e.printStackTrace()
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    startForeground(
+                        NOTIFICATION_ID,
+                        notification,
+                        ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK
+                    )
+                } else {
+                    startForeground(NOTIFICATION_ID, notification)
+                }
+            } catch (e2: Exception) {
+                // Совсем не удалось подняться — корректно гасим сервис,
+                // иначе через 5 секунд система убьёт процесс за неявленный startForeground.
+                e2.printStackTrace()
+                stopSelf()
+            }
         }
     }
 
