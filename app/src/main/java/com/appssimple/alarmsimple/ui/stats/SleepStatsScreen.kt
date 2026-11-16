@@ -156,26 +156,10 @@ fun SleepStatsScreen(
 
                             Spacer(Modifier.height(14.dp))
 
-                            HypnogramChart(
-                                epochs = state.epochs,
-                                windowStartMs = state.nightStartMs,
-                                windowEndMs = state.nightEndMs,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .height(170.dp)
+                            NightHypnogram(
+                                segments = state.segments,
+                                modifier = Modifier.fillMaxWidth()
                             )
-
-                            if (state.sessionRanges.size > 1) {
-                                Spacer(Modifier.height(6.dp))
-                                Text(
-                                    text = "Сессии: " + state.sessionRanges.joinToString(" · ") { (from, to) ->
-                                        "${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(from))}" +
-                                            "–${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(to))}"
-                                    },
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
                         }
                     }
                 }
@@ -259,6 +243,71 @@ private fun PhaseLegendBadge(title: String, color: Color) {
         )
         Spacer(Modifier.width(4.dp))
         Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+fun NightHypnogram(
+    segments: List<NightSegment>,
+    modifier: Modifier = Modifier
+) {
+    if (segments.isEmpty()) return
+    val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+
+    Column(modifier = modifier) {
+        segments.forEachIndexed { index, segment ->
+            val minutes = ((segment.endMs - segment.startMs) / 60_000L).toInt().coerceAtLeast(0)
+
+            if (segments.size > 1) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Сессия ${index + 1}: ${timeFormat.format(Date(segment.startMs))}–${timeFormat.format(Date(segment.endMs))}",
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Text(
+                        text = "${minutes / 60}ч ${minutes % 60}м",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.height(6.dp))
+            }
+
+            if (segment.epochs.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(64.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Color.White.copy(alpha = 0.04f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "Фазы этой сессии не записаны",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                HypnogramChart(
+                    epochs = segment.epochs,
+                    windowStartMs = segment.startMs,
+                    windowEndMs = segment.endMs,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(150.dp)
+                )
+            }
+
+            if (index != segments.lastIndex) {
+                Spacer(Modifier.height(12.dp))
+            }
+        }
     }
 }
 

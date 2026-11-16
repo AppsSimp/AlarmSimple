@@ -26,6 +26,13 @@ import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
 
+/** Одна сессия внутри ночи: свой интервал и свои эпохи — для отдельной гипнограммы. */
+data class NightSegment(
+    val startMs: Long,
+    val endMs: Long,
+    val epochs: List<SleepEpochEntity>
+)
+
 data class SleepStatsUiState(
     val sessionId: Long = 0,
     val isLoaded: Boolean = false,
@@ -40,11 +47,8 @@ data class SleepStatsUiState(
     val snippets: List<AudioSnippetEntity> = emptyList(),
     val playingSnippetId: Long? = null,
     val dailySummary: String = "",
-    /** Границы ночи (от первого засыпания до последнего пробуждения) — общая шкала гипнограммы. */
-    val nightStartMs: Long = 0L,
-    val nightEndMs: Long = 0L,
-    /** Интервалы каждой сессии внутри объединённой ночи. */
-    val sessionRanges: List<Pair<Long, Long>> = emptyList()
+    /** Сессии ночи по порядку — каждая рисуется своей гипнограммой. */
+    val segments: List<NightSegment> = emptyList()
 )
 
 @HiltViewModel
@@ -107,9 +111,9 @@ class SleepStatsViewModel @Inject constructor(
                     phaseMinutes = phaseMinutes,
                     snippets = snippets,
                     dailySummary = summary,
-                    nightStartMs = nights.minOf { it.onsetMs },
-                    nightEndMs = nights.maxOf { it.wakeMs },
-                    sessionRanges = nights.sortedBy { it.onsetMs }.map { it.onsetMs to it.wakeMs }
+                    segments = nights
+                        .sortedBy { it.onsetMs }
+                        .map { NightSegment(it.onsetMs, it.wakeMs, it.epochs) }
                 )
             }
         }
