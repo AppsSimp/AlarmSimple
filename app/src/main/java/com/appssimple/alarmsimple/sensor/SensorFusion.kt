@@ -9,6 +9,12 @@ import kotlinx.coroutines.flow.asSharedFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
+/** Пауза, после которой считаем, что трекер просто не работал, и не выдумываем сон. */
+private const val MAX_BACKFILL_GAP_MS = 3 * 3600_000L
+
+/** Сколько эпох максимум можно восстановить (2 часа). */
+private const val MAX_BACKFILL_EPOCHS = 240
+
 data class FusionEpochState(
     val timestampMs: Long,
     val phase: SleepPhase,
@@ -58,6 +64,15 @@ class SensorFusion @Inject constructor(
     private var consecutiveQuietEpochs = 0
     private var consecutiveStillEpochs = 0
 
+    // Последние 20 эпох: был ли человек неподвижен. Окно терпит редкие подёргивания,
+    // иначе один микродвижмент раз в пару минут не даёт вернуться из AWAKE в сон.
+    private val recentStillFlags = ArrayDeque<Boolean>()
+    private var consecutiveSpeechEpochs = 0
+
+    // Сторож микрофона: если noise floor не меняется много эпох подряд — захват завис
+    private var lastNoiseFloorValue = -1f
+    private var unchangedNoiseEpochs = 0
+
     // Consecutive stillness epochs inside sleep (used for DEEP sleep entry)
     private var sleepConsecutiveStillEpochs = 0
     private var consecutiveMovingEpochs = 0
@@ -88,6 +103,13 @@ class SensorFusion @Inject constructor(
         deepEpochsInCycle = 0
         recentMovementWindow.clear()
         recentQuietStillEpochs.clear()
+        recentStillFlags.clear()
+        consecutiveSpeechEpochs = 0
+        lastNoiseFloorValue = -1f
+        unchangedNoiseEpochs = 0
+        // КРИТИЧНО: сбрасываем метку последней эпохи, иначе новая сессия через несколько
+        // часов «бэкфиллит» пропуск и приписывает пользователю до 10 часов сна.
+        lastEpochTimestampMs = 0L
         synchronized(audioLock) {
             recentAudioClasses.clear()
         }
@@ -152,11 +174,12 @@ class SensorFusion @Inject constructor(
 
         // ЖЕЛЕЗОБЕТОННЫЙ ЗАЩИТНИК ОТ DOZE MODE (Wall-Clock Gap Backfill):
         // Если операционная система спала или произошла пауза (> 45 сек),
-        // математически восстанавливаем ВСЕ пропущенные 30-секундные эпохи покоя по реальному времени часов!
-        // В это время телефон лежал неподвижно в кровати — данные сна и фазы не теряются!
-        if (lastEpochTimestampMs > 0L && timeDeltaMs >= 45_000L) {
+        // математически восстанавливаем пропущенные 30-секундные эпохи покоя по реальному времени.
+        // Ограничения: не больше 2 часов подряд и только для пауз до 3 часов — иначе это уже
+        // не «сон в Doze», а выключенный трекер, и придумывать часы сна нельзя.
+        if (lastEpochTimestampMs > 0L && timeDeltaMs in 45_000L..MAX_BACKFILL_GAP_MS) {
             val missingCount = ((timeDeltaMs - 15_000L) / 30_000L).toInt()
-            val safeCount = kotlin.math.min(missingCount, 1200) // До 10 часов провала
+            val safeCount = kotlin.math.min(missingCount, MAX_BACKFILL_EPOCHS)
             for (i in 1..safeCount) {
                 val synthTime = lastEpochTimestampMs + (i * 30_000L)
                 processSingleEpoch(
@@ -187,6 +210,21 @@ class SensorFusion @Inject constructor(
             else recentAudioClasses.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
         }
 
+        // Сторож микрофона: noise floor, который не меняется 5 минут подряд, — это зависший
+        // AudioRecord (в логах такие сессии показывали ровную константу 22.8 / 25.0 всю ночь).
+        val noiseNow = audioAnalyzer.noiseFloorRms
+        if (noiseNow == lastNoiseFloorValue) {
+            unchangedNoiseEpochs++
+            if (unchangedNoiseEpochs >= 10) {
+                android.util.Log.w("SensorFusion", "Microphone noise floor frozen at $noiseNow — restarting AudioRecord")
+                audioAnalyzer.forceRestartMic()
+                unchangedNoiseEpochs = 0
+            }
+        } else {
+            unchangedNoiseEpochs = 0
+            lastNoiseFloorValue = noiseNow
+        }
+
         // 2. Track Sleep Onset
         // Quiet audio: тишина, ровный фон, дыхание и звуки, которые случаются ВО СНЕ:
         // храп, газы, скрежет зубами, судорожный вдох после апноэ
@@ -194,14 +232,21 @@ class SensorFusion @Inject constructor(
             AudioClass.SILENCE, AudioClass.AMBIENT, AudioClass.BREATHING,
             AudioClass.SNORE, AudioClass.FLATULENCE, AudioClass.BRUXISM, AudioClass.GASP
         )
+
+        // Речь считается бодрствованием только если ей сопутствует движение или она длится
+        // несколько эпох подряд. Телевизор/разговор рядом не должен «будить» спящего.
+        if (dominantAudio == AudioClass.SPEECH) consecutiveSpeechEpochs++ else consecutiveSpeechEpochs = 0
+        val speechIsWake = dominantAudio == AudioClass.SPEECH &&
+                (movement.isUserMoving || movement.movementIntensity >= 0.35f || consecutiveSpeechEpochs >= 3)
+
         if (isQuiet) {
             consecutiveQuietEpochs++
-        } else if (dominantAudio == AudioClass.SPEECH) {
-            // Speech resets quiet count
+        } else if (speechIsWake) {
+            // Настоящая речь с движением сбрасывает счётчик тишины
             consecutiveQuietEpochs = 0
         } else {
-            // Loud non-snore noise decreases quiet count
-            consecutiveQuietEpochs = kotlin.math.max(0, consecutiveQuietEpochs - 2)
+            // Фоновый шум (телевизор, речь без движения) лишь слегка уменьшает счётчик
+            consecutiveQuietEpochs = kotlin.math.max(0, consecutiveQuietEpochs - 1)
         }
 
         // Movement / Stillness evaluation:
@@ -216,6 +261,9 @@ class SensorFusion @Inject constructor(
         } else {
             consecutiveStillEpochs = kotlin.math.max(0, consecutiveStillEpochs - 3)
         }
+
+        recentStillFlags.addLast(isStill)
+        if (recentStillFlags.size > 20) recentStillFlags.removeFirst()
 
         // Sliding window: track whether the epoch was relaxed (still & quiet)
         val isRelaxedEpoch = isStill && (isQuiet || consecutiveQuietEpochs >= 10)
@@ -241,7 +289,7 @@ class SensorFusion @Inject constructor(
         }
 
         // 3. Classify Sleep Phase
-        val phase = classifyPhase(movement, dominantAudio, now)
+        val phase = classifyPhase(movement, dominantAudio, speechIsWake, now)
 
         // 4. Check if optimal for Smart Wake-Up:
         val isLightForWake = phase == SleepPhase.LIGHT || (phase == SleepPhase.AWAKE && movement.movementIntensity > 0.20f)
@@ -267,6 +315,7 @@ class SensorFusion @Inject constructor(
     private fun classifyPhase(
         movement: EpochMovementResult,
         audio: AudioClass?,
+        speechIsWake: Boolean,
         now: Long
     ): SleepPhase {
         // If sleep onset not yet reached, user is Awake
@@ -301,10 +350,13 @@ class SensorFusion @Inject constructor(
         }
 
         if (isFinalWakeupDetected) {
-            // После утреннего подъема человек бодрствует.
-            // Положить телефон на стол на пару минут НЕ возвращает сон.
-            // Для повторного засыпания требуется честный 10-минутный штиль (>= 20 эпох).
-            if (consecutiveStillEpochs < 20) {
+            // После утреннего подъёма человек бодрствует, но лежать без движения 20 эпох
+            // подряд не требуется: редкие подёргивания не должны растягивать «бодрствование»
+            // на час. Смотрим на долю неподвижных эпох в последних 20 (терпим каждую пятую).
+            val stillInWindow = recentStillFlags.count { it }
+            val windowReady = recentStillFlags.size >= 10
+            val calmEnough = windowReady && stillInWindow >= (recentStillFlags.size * 4) / 5
+            if (!calmEnough) {
                 sleepConsecutiveStillEpochs = 0
                 remEpochsInBout = 0
                 currentSleepPhase = SleepPhase.AWAKE
@@ -322,7 +374,7 @@ class SensorFusion @Inject constructor(
         // В) Голос (SPEECH)
         val isMajorSpike = movement.movementIntensity >= 8.0f || movement.maxDelta >= 2.5f
         val isSustainedMotion = consecutiveMovingEpochs >= 2 && movement.movementIntensity >= 1.5f
-        val isSpeech = audio == AudioClass.SPEECH
+        val isSpeech = speechIsWake
 
         if (isMajorSpike || isSustainedMotion || isSpeech) {
             sleepConsecutiveStillEpochs = 0

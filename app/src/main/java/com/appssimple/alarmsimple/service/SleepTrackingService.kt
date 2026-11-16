@@ -81,6 +81,9 @@ class SleepTrackingService : Service() {
         /** Used when the user tracks sleep without configuring an alarm. */
         const val NO_ALARM_ID = -1L
 
+        /** Если эпох нет дольше 30 минут, считаем прежний трекинг «повисшим». */
+        private const val STALE_SESSION_GAP_MS = 30 * 60_000L
+
         private val _isTracking = MutableStateFlow(false)
         val isTracking: StateFlow<Boolean> = _isTracking.asStateFlow()
 
@@ -134,8 +137,45 @@ class SleepTrackingService : Service() {
     }
 
     private fun startTracking(alarmId: Long) {
-        if (_isTracking.value) return
+        if (_isTracking.value) {
+            // Сервис мог «залипнуть» после Doze: трекинг формально активен, а эпохи не
+            // пишутся часами. Без этой проверки новая ночь дописывалась в старую сессию
+            // (кейс session 67: утренний хвост склеился со следующей ночью).
+            serviceScope.launch {
+                val lastEpoch = if (currentSessionId > 0) {
+                    sleepEpochDao.getLatestEpochForSession(currentSessionId)
+                } else null
+                val stale = lastEpoch == null ||
+                        System.currentTimeMillis() - lastEpoch.timestampMs > STALE_SESSION_GAP_MS
+                if (!stale) return@launch
+                finishStaleSession(lastEpoch?.timestampMs)
+                doStartTracking(alarmId)
+            }
+            return
+        }
+        doStartTracking(alarmId)
+    }
 
+    /** Закрывает «повисшую» сессию по времени последней записанной эпохи. */
+    private suspend fun finishStaleSession(lastEpochMs: Long?) {
+        sensorFusion.stop()
+        audioAnalyzer.stop()
+        silentAudioPlayer.stop()
+        if (currentSessionId > 0) {
+            val existing = sleepSessionDao.getSessionById(currentSessionId)
+            if (existing != null && existing.wakeUpMs == null) {
+                sleepSessionDao.updateSession(
+                    existing.copy(wakeUpMs = lastEpochMs ?: System.currentTimeMillis())
+                )
+            }
+        }
+        currentSessionId = 0
+        _isTracking.value = false
+        _trackingStartMs.value = 0L
+        cancelHeartbeat()
+    }
+
+    private fun doStartTracking(alarmId: Long) {
         targetAlarmId = alarmId
         sleepOnsetMs = null
         disturbanceCount = 0

@@ -62,6 +62,17 @@ class AudioAnalyzer @Inject constructor(
     @Volatile
     private var isRunning = false
 
+    @Volatile
+    private var lastAnalysisAtMs = 0L
+    private var micWatchdogJob: Job? = null
+
+    /** Последнее значение RMS и момент, с которого оно не меняется (детектор зависшего захвата). */
+    @Volatile
+    private var lastRmsValue = -1f
+
+    @Volatile
+    private var rmsUnchangedSinceMs = 0L
+
     // Rolling circular buffer in memory (stores ~12 seconds of 16-bit PCM @ 8000Hz mono):
     // 4 сек ДО события + 8 сек ПОСЛЕ. Буфер заполняет только главный цикл чтения
     // (единственный читатель AudioRecord) — сниппет позже снимает готовый срез.
@@ -140,6 +151,9 @@ class AudioAnalyzer @Inject constructor(
 
             audioRecord?.startRecording()
 
+            lastAnalysisAtMs = System.currentTimeMillis()
+            startMicWatchdog()
+
             recordingJob = scope.launch {
                 runProcessingLoop(sessionId)
             }
@@ -154,6 +168,8 @@ class AudioAnalyzer @Inject constructor(
         isRunning = false
         recordingJob?.cancel()
         recordingJob = null
+        micWatchdogJob?.cancel()
+        micWatchdogJob = null
 
         try {
             audioRecord?.stop()
@@ -164,6 +180,37 @@ class AudioAnalyzer @Inject constructor(
         audioRecord = null
     }
 
+    /** Принудительно пересоздаёт AudioRecord (вызывается сторожем из SensorFusion). */
+    fun forceRestartMic() {
+        if (!isRunning) return
+        restartAudioRecord()
+        lastAnalysisAtMs = System.currentTimeMillis()
+        synchronized(bufferLock) {
+            rmsUnchangedSinceMs = 0L
+            lastRmsValue = -1f
+        }
+    }
+
+    /**
+     * Сторож захвата: если анализ не отдаёт результаты дольше 90 секунд, значит
+     * AudioRecord «залип» и молча возвращает пустоту — пересоздаём его.
+     */
+    private fun startMicWatchdog() {
+        micWatchdogJob?.cancel()
+        micWatchdogJob = scope.launch {
+            while (isActive && isRunning) {
+                delay(30_000L)
+                if (!isRunning) break
+                val sinceLast = System.currentTimeMillis() - lastAnalysisAtMs
+                if (sinceLast > 90_000L) {
+                    android.util.Log.w("AudioAnalyzer", "No audio analysis for ${sinceLast / 1000}s — restarting AudioRecord")
+                    forceRestartMic()
+                }
+            }
+        }
+    }
+
+    @Synchronized
     private fun restartAudioRecord() {
         try {
             audioRecord?.stop()
@@ -243,6 +290,21 @@ class AudioAnalyzer @Inject constructor(
             // Acoustic analysis
             val rms = calculateRms(readBuffer, readCount)
             updateNoiseFloor(rms)
+
+            // Детектор «застывшего» микрофона: одинаковый RMS дольше 30 секунд при ненулевом
+            // уровне невозможен, значит AudioRecord отдаёт кэш/константу — пересоздаём захват.
+            val nowMs = System.currentTimeMillis()
+            lastAnalysisAtMs = nowMs
+            if (rms == lastRmsValue) {
+                if (rmsUnchangedSinceMs == 0L) rmsUnchangedSinceMs = nowMs
+                else if (nowMs - rmsUnchangedSinceMs > 30_000L && rms > 2f) {
+                    android.util.Log.w("AudioAnalyzer", "RMS frozen at $rms for 30s — restarting AudioRecord")
+                    forceRestartMic()
+                }
+            } else {
+                lastRmsValue = rms
+                rmsUnchangedSinceMs = nowMs
+            }
 
             val deltaOverNoise = rms - noiseFloorRms
             val audioClass = classifyAudio(readBuffer, readCount, rms, deltaOverNoise, isExternalMedia)
