@@ -19,7 +19,7 @@ sealed interface Screen {
     data object Settings : Screen
     
     @Serializable
-    data class SleepStats(val sessionId: Long) : Screen
+    data class SleepStats(val sessionId: Long = -1, val date: String = "") : Screen
     
     @Serializable
     data object SleepHistory : Screen

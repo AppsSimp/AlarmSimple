@@ -40,17 +40,27 @@ import com.appssimple.alarmsimple.ui.theme.BrandSecondary
 import java.text.SimpleDateFormat
 import java.util.*
 
+private fun dayTitle(dateKey: String): String {
+    val locale = Locale("ru")
+    val parser = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+    val output = SimpleDateFormat("d MMMM", locale)
+    val parsed = runCatching { parser.parse(dateKey) }.getOrNull() ?: return dateKey
+    return output.format(parsed)
+        .replaceFirstChar { if (it.isLowerCase()) it.titlecase(locale) else it.toString() }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SleepStatsScreen(
     sessionId: Long,
+    date: String? = null,
     onNavigateBack: () -> Unit,
     viewModel: SleepStatsViewModel = hiltViewModel()
 ) {
     val state by viewModel.uiState.collectAsState()
 
-    LaunchedEffect(sessionId) {
-        viewModel.loadSession(sessionId)
+    LaunchedEffect(sessionId, date) {
+        viewModel.loadData(sessionId, date)
     }
 
     DisposableEffect(Unit) {
@@ -64,7 +74,12 @@ fun SleepStatsScreen(
             containerColor = Color.Transparent,
             topBar = {
                 TopAppBar(
-                    title = { Text(stringResource(R.string.sleep_stats), fontWeight = FontWeight.Bold) },
+                    title = {
+                        Text(
+                            text = date?.let { dayTitle(it) } ?: stringResource(R.string.sleep_stats),
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
                     navigationIcon = {
                         IconButton(onClick = onNavigateBack) {
                             Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Назад")
@@ -115,7 +130,7 @@ fun SleepStatsScreen(
                             ) {
                                 MetricColumn("Уснул", state.sleepOnsetFormatted)
                                 MetricColumn("Проснулся", state.wakeUpFormatted)
-                                MetricColumn("Эффективность", "${state.sleepEfficiency}%")
+                                MetricColumn("Качество", "${state.sleepQuality}%")
                             }
                         }
                     }

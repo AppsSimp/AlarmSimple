@@ -46,7 +46,7 @@ fun AppNavHost(
                 onOpenSettings = { navController.navigate(Screen.Settings) },
                 onOpenSleepTracking = { navController.navigate(Screen.SleepTracking) },
                 onOpenHelp = { navController.navigate(Screen.Onboarding) },
-                onOpenSession = { id -> navController.navigate(Screen.SleepStats(sessionId = id)) }
+                onOpenDate = { date -> navController.navigate(Screen.SleepStats(date = date)) }
             )
         }
         
@@ -75,13 +75,14 @@ fun AppNavHost(
             val route = backStackEntry.toRoute<Screen.SleepStats>()
             SleepStatsScreen(
                 sessionId = route.sessionId,
+                date = route.date.ifEmpty { null },
                 onNavigateBack = { navController.popBackStack() }
             )
         }
         
         composable<Screen.SleepHistory> {
             SleepHistoryScreen(
-                onOpenSession = { id -> navController.navigate(Screen.SleepStats(sessionId = id)) },
+                onOpenDate = { date -> navController.navigate(Screen.SleepStats(date = date)) },
                 onNavigateBack = { navController.popBackStack() }
             )
         }

@@ -29,6 +29,8 @@ import com.appssimple.alarmsimple.data.preferences.UserPreferences
 import com.appssimple.alarmsimple.ui.components.AppBackground
 import com.appssimple.alarmsimple.ui.components.ModernBadge
 import com.appssimple.alarmsimple.ui.components.ModernCard
+import com.appssimple.alarmsimple.ui.components.SleepCalendar
+import com.appssimple.alarmsimple.ui.components.sleepQualityPercent
 import com.appssimple.alarmsimple.ui.theme.BrandPrimary
 import com.appssimple.alarmsimple.ui.theme.BrandSecondary
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -46,10 +48,24 @@ enum class SleepAnalysisPeriod(val label: String) {
     YEAR("Год")
 }
 
+/** Все сессии за локальную дату пробуждения, объединённые в одну «ночь». */
+private data class CalendarDay(
+    val dateKey: String,
+    val sessions: List<SleepSessionEntity>,
+    val sleepMinutes: Int,
+    val timeInBedMinutes: Int,
+    val onsetMs: Long,
+    val wakeMs: Long,
+    val disturbanceCount: Int,
+    val snoreMinutes: Int
+) {
+    val quality: Int get() = sleepQualityPercent(sleepMinutes, timeInBedMinutes)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SleepHistoryScreen(
-    onOpenSession: (Long) -> Unit,
+    onOpenDate: (String) -> Unit,
     onNavigateBack: () -> Unit = {},
     showBackButton: Boolean = true,
     viewModel: SleepHistoryViewModel = hiltViewModel()
@@ -58,6 +74,36 @@ fun SleepHistoryScreen(
     var selectedPeriod by remember { mutableStateOf(SleepAnalysisPeriod.WEEK) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
+
+    // Дата (локальная, по моменту пробуждения) -> объединённая ночь.
+    // Несколько сессий за день (например, поспал 2 часа, потом ещё час) считаются одной ночью.
+    val calendarDays = remember(sessions) {
+        val keyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+        val byDate = LinkedHashMap<String, MutableList<SleepSessionEntity>>()
+        sessions.forEach { session ->
+            val wakeUpMs = session.wakeUpMs ?: return@forEach
+            if (session.sleepOnsetMs == null) return@forEach
+            byDate.getOrPut(keyFormat.format(Date(wakeUpMs))) { mutableListOf() }.add(session)
+        }
+        byDate.mapValues { (dateKey, daySessions) ->
+            CalendarDay(
+                dateKey = dateKey,
+                sessions = daySessions.sortedBy { it.sleepOnsetMs },
+                sleepMinutes = daySessions.sumOf { session ->
+                    ((session.wakeUpMs!! - session.sleepOnsetMs!!) / 60_000L).toInt()
+                },
+                timeInBedMinutes = daySessions.sumOf { session ->
+                    ((session.wakeUpMs!! - session.trackingStartMs) / 60_000L).toInt().coerceAtLeast(1)
+                },
+                onsetMs = daySessions.minOf { it.sleepOnsetMs!! },
+                wakeMs = daySessions.maxOf { it.wakeUpMs!! },
+                disturbanceCount = daySessions.sumOf { it.disturbanceCount },
+                snoreMinutes = daySessions.sumOf { it.snoreMinutes }
+            )
+        }
+    }
+    val calendarData = remember(calendarDays) { calendarDays.mapValues { it.value.quality } }
+    val nights = remember(calendarDays) { calendarDays.values.sortedByDescending { it.wakeMs } }
 
     AppBackground {
         Scaffold(
@@ -90,6 +136,14 @@ fun SleepHistoryScreen(
                     .padding(horizontal = 16.dp),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
+                // Календарь сна на месяц: нажатие на ночь открывает её статистику
+                item {
+                    SleepCalendar(
+                        data = calendarData,
+                        onDateSelected = { date -> if (calendarDays.containsKey(date)) onOpenDate(date) }
+                    )
+                }
+
                 // Вкладки переключения периода анализа: День / Неделя / Месяц / Год
                 item {
                     SingleChoiceSegmentedButtonRow(
@@ -115,20 +169,20 @@ fun SleepHistoryScreen(
                 item {
                     SleepPeriodAnalysisCard(
                         period = selectedPeriod,
-                        sessions = sessions
+                        days = nights
                     )
                 }
 
                 item {
                     Text(
-                        text = "Журнал ночей (${sessions.size})",
+                        text = "Журнал ночей (${nights.size})",
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.Bold,
                         modifier = Modifier.padding(top = 8.dp)
                     )
                 }
 
-                if (sessions.isEmpty()) {
+                if (nights.isEmpty()) {
                     item {
                         ModernCard(contentPadding = PaddingValues(28.dp)) {
                             Column(
@@ -153,15 +207,15 @@ fun SleepHistoryScreen(
                         }
                     }
                 } else {
-                    items(sessions, key = { it.id }) { session ->
+                    items(nights, key = { it.dateKey }) { night ->
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { dismissVal ->
                                 if (dismissVal == SwipeToDismissBoxValue.EndToStart) {
-                                    viewModel.deleteSession(session)
+                                    night.sessions.forEach { viewModel.deleteSession(it) }
                                     scope.launch {
                                         val res = snackbarHostState.showSnackbar("Запись удалена", actionLabel = "Отменить")
                                         if (res == SnackbarResult.ActionPerformed) {
-                                            viewModel.restoreSession(session)
+                                            night.sessions.forEach { viewModel.restoreSession(it) }
                                         }
                                     }
                                     true
@@ -191,8 +245,8 @@ fun SleepHistoryScreen(
                             }
                         ) {
                             SleepHistoryCardItem(
-                                session = session,
-                                onClick = { onOpenSession(session.id) }
+                                night = night,
+                                onClick = { onOpenDate(night.dateKey) }
                             )
                         }
                     }
@@ -205,9 +259,9 @@ fun SleepHistoryScreen(
 }
 
 @Composable
-fun SleepPeriodAnalysisCard(
+private fun SleepPeriodAnalysisCard(
     period: SleepAnalysisPeriod,
-    sessions: List<SleepSessionEntity>
+    days: List<CalendarDay>
 ) {
     val now = System.currentTimeMillis()
     val periodCutoff = remember(period, now) {
@@ -220,35 +274,21 @@ fun SleepPeriodAnalysisCard(
         }
     }
 
-    val periodSessions = remember(sessions, periodCutoff) {
-        sessions.filter { it.trackingStartMs >= periodCutoff }
+    val periodDays = remember(days, periodCutoff) {
+        days.filter { it.wakeMs >= periodCutoff }
     }
 
-    val (avgHours, avgEfficiency, totalDebtMinutes, analysisText, statusColor) = remember(periodSessions, period) {
-        if (periodSessions.isEmpty()) {
+    val (avgHours, avgQuality, totalDebtMinutes, analysisText, statusColor) = remember(periodDays, period) {
+        if (periodDays.isEmpty()) {
             Triple(0f, 0, 0) to ("Нет данных за этот период. Спите с приложением для точной статистики." to Color.Gray)
         } else {
-            val totalMinutes = periodSessions.mapNotNull {
-                if (it.sleepOnsetMs != null && it.wakeUpMs != null) {
-                    ((it.wakeUpMs - it.sleepOnsetMs) / 60_000L).toInt()
-                } else null
-            }
-
-            val avgMins = if (totalMinutes.isNotEmpty()) totalMinutes.average().toFloat() else 0f
+            val avgMins = periodDays.map { it.sleepMinutes }.average().toFloat()
             val avgH = avgMins / 60f
-
-            val efficiencies = periodSessions.mapNotNull {
-                if (it.sleepOnsetMs != null && it.wakeUpMs != null) {
-                    val sleep = it.wakeUpMs - it.sleepOnsetMs
-                    val bed = it.wakeUpMs - it.trackingStartMs
-                    if (bed > 0) ((sleep.toFloat() / bed) * 100).toInt() else null
-                } else null
-            }
-            val avgEff = if (efficiencies.isNotEmpty()) efficiencies.average().toInt() else 0
+            val avgQuality = periodDays.map { it.quality }.average().toInt()
 
             // Норма сна взрослого: 8 часов в сутки (480 минут)
-            val expectedTotalMinutes = periodSessions.size * 480
-            val actualTotalMinutes = totalMinutes.sum()
+            val expectedTotalMinutes = periodDays.size * 480
+            val actualTotalMinutes = periodDays.sumOf { it.sleepMinutes }
             val balance = actualTotalMinutes - expectedTotalMinutes
 
             val text: String
@@ -271,7 +311,7 @@ fun SleepPeriodAnalysisCard(
                 }
             }
 
-            Triple(avgH, avgEff, balance) to (text to col)
+            Triple(avgH, avgQuality, balance) to (text to col)
         }.let { (stats, textCol) ->
             Tuple5(stats.first, stats.second, stats.third, textCol.first, textCol.second)
         }
@@ -317,20 +357,24 @@ fun SleepPeriodAnalysisCard(
                     )
                 }
                 Column {
-                    Text("Эффективность", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text("Качество сна", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = "$avgEfficiency%",
+                        text = "$avgQuality%",
                         fontSize = 24.sp,
                         fontWeight = FontWeight.Bold,
-                        color = if (avgEfficiency >= 85) Color(0xFF10B981) else Color(0xFFFBBF24)
+                        color = when {
+                            avgQuality >= 80 -> Color(0xFF10B981)
+                            avgQuality >= 60 -> Color(0xFFFBBF24)
+                            else -> Color(0xFFF43F5E)
+                        }
                     )
                 }
                 Column {
                     Text("Ночей в базе", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.height(2.dp))
                     Text(
-                        text = "${periodSessions.size}",
+                        text = "${periodDays.size}",
                         fontSize = 24.sp,
                         fontWeight = FontWeight.Bold,
                         color = BrandPrimary
@@ -361,24 +405,19 @@ private data class Tuple5<A, B, C, D, E>(
 )
 
 @Composable
-fun SleepHistoryCardItem(
-    session: SleepSessionEntity,
+private fun SleepHistoryCardItem(
+    night: CalendarDay,
     onClick: () -> Unit
 ) {
     val dateFormat = remember { SimpleDateFormat("d MMMM, EEEE", Locale("ru")) }
     val timeFormat = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
-    // Если сон закончился на следующий день (утро следующего дня), зачитываем этот сон следующему дню
-    val displayDateMs = session.wakeUpMs ?: (session.sleepOnsetMs ?: session.trackingStartMs)
-    val dateStr = dateFormat.format(Date(displayDateMs)).replaceFirstChar { it.titlecase(Locale("ru")) }
-    val onsetStr = session.sleepOnsetMs?.let { timeFormat.format(Date(it)) } ?: "--:--"
-    val wakeStr = session.wakeUpMs?.let { timeFormat.format(Date(it)) } ?: "--:--"
+    val dateStr = dateFormat.format(Date(night.wakeMs)).replaceFirstChar { it.titlecase(Locale("ru")) }
+    val onsetStr = timeFormat.format(Date(night.onsetMs))
+    val wakeStr = timeFormat.format(Date(night.wakeMs))
 
-    val totalSleepMinutes = if (session.sleepOnsetMs != null && session.wakeUpMs != null) {
-        ((session.wakeUpMs - session.sleepOnsetMs) / 60_000L).toInt()
-    } else 0
-    val hours = totalSleepMinutes / 60
-    val mins = totalSleepMinutes % 60
+    val hours = night.sleepMinutes / 60
+    val mins = night.sleepMinutes % 60
 
     ModernCard(
         modifier = Modifier
@@ -406,18 +445,18 @@ fun SleepHistoryCardItem(
                 )
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = "Сон с $onsetStr до $wakeStr",
+                    text = "Сон с $onsetStr до $wakeStr · качество ${night.quality}%",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
 
             Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                if (session.snoreMinutes > 0) {
-                    ModernBadge(text = "😴 ${session.snoreMinutes}м храпа", color = Color(0xFF38BDF8))
+                if (night.snoreMinutes > 0) {
+                    ModernBadge(text = "😴 ${night.snoreMinutes}м храпа", color = Color(0xFF38BDF8))
                 }
-                if (session.disturbanceCount > 0) {
-                    ModernBadge(text = "⚡ ${session.disturbanceCount} ворочаний", color = Color(0xFFF59E0B))
+                if (night.disturbanceCount > 0) {
+                    ModernBadge(text = "⚡ ${night.disturbanceCount} ворочаний", color = Color(0xFFF59E0B))
                 }
             }
         }

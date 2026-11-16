@@ -10,6 +10,7 @@ import com.appssimple.alarmsimple.data.db.dao.SleepSessionDao
 import com.appssimple.alarmsimple.data.db.entity.AudioSnippetEntity
 import com.appssimple.alarmsimple.data.db.entity.SleepEpochEntity
 import com.appssimple.alarmsimple.domain.model.SleepPhase
+import com.appssimple.alarmsimple.ui.components.sleepQualityPercent
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -18,6 +19,7 @@ import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import java.io.File
 import java.text.SimpleDateFormat
+import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import javax.inject.Inject
@@ -28,13 +30,14 @@ data class SleepStatsUiState(
     val totalSleepFormatted: String = "0ч 0м",
     val sleepOnsetFormatted: String = "--:--",
     val wakeUpFormatted: String = "--:--",
-    val sleepEfficiency: Int = 0,
+    val sleepQuality: Int = 0,
     val disturbanceCount: Int = 0,
     val snoreMinutes: Int = 0,
     val epochs: List<SleepEpochEntity> = emptyList(),
     val phaseMinutes: Map<String, Int> = emptyMap(),
     val snippets: List<AudioSnippetEntity> = emptyList(),
-    val playingSnippetId: Long? = null
+    val playingSnippetId: Long? = null,
+    val dailySummary: String = ""
 )
 
 @HiltViewModel
@@ -49,42 +52,27 @@ class SleepStatsViewModel @Inject constructor(
 
     private var mediaPlayer: MediaPlayer? = null
 
-    fun loadSession(sessionId: Long) {
+    fun loadData(sessionId: Long, date: String? = null) {
         viewModelScope.launch {
-            val session = if (sessionId > 0) {
-                sleepSessionDao.getSessionById(sessionId)
-            } else {
-                sleepSessionDao.getLatestValidSession()
-            } ?: return@launch
+            val nights = loadNights(sessionId, date)
+            if (nights.isEmpty()) return@launch
 
-            val allEpochs = sleepEpochDao.getEpochsForSessionOnce(session.id)
-            val snippets = audioSnippetDao.getSnippetsForSessionOnce(session.id)
+            val totalSleepMinutes = nights.sumOf { it.sleepMinutes }
+            val timeInBedMinutes = nights.sumOf { it.timeInBedMinutes }.coerceAtLeast(1)
+            val quality = sleepQualityPercent(totalSleepMinutes, timeInBedMinutes)
 
-            // Эпохи ДО засыпания — это не «пробуждения», человек ещё просто не уснул.
-            // Гипнограмма и статистика фаз начинаются с момента засыпания (sleepOnsetMs).
-            val sinceOnset = session.sleepOnsetMs?.let { onset ->
-                allEpochs.filter { it.timestampMs >= onset }
-            } ?: allEpochs
+            val epochs = nights
+                .flatMap { sleepEpochDao.getEpochsForSessionOnce(it.id) }
+                .sortedBy { it.timestampMs }
+                .let { smoothShortAwakenings(it) }
 
-            // Микро-«пробуждения» короче 3 эпох (90 сек) — это шевеления, а не просыпания.
-            // На графике и в статистике фаз склеиваем их с окружающим сном (LIGHT).
-            val epochs = smoothShortAwakenings(sinceOnset)
+            val snippets = nights
+                .flatMap { audioSnippetDao.getSnippetsForSessionOnce(it.id) }
+                .sortedBy { it.timestampMs }
 
             val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
-            val onsetStr = session.sleepOnsetMs?.let { timeFormat.format(Date(it)) } ?: "--:--"
-            val wakeStr = session.wakeUpMs?.let { timeFormat.format(Date(it)) } ?: "--:--"
-
-            val totalSleepMinutes = if (session.sleepOnsetMs != null && session.wakeUpMs != null) {
-                ((session.wakeUpMs - session.sleepOnsetMs) / 60_000L).toInt().coerceAtLeast(0)
-            } else 0
-
-            val timeInBedMinutes = if (session.wakeUpMs != null) {
-                ((session.wakeUpMs - session.trackingStartMs) / 60_000L).toInt().coerceAtLeast(1)
-            } else 1
-
-            val efficiency = ((totalSleepMinutes.toFloat() / timeInBedMinutes) * 100)
-                .toInt()
-                .coerceIn(0, 100)
+            val onsetStr = timeFormat.format(Date(nights.minOf { it.onsetMs }))
+            val wakeStr = timeFormat.format(Date(nights.maxOf { it.wakeMs }))
 
             val hours = totalSleepMinutes / 60
             val mins = totalSleepMinutes % 60
@@ -94,22 +82,92 @@ class SleepStatsViewModel @Inject constructor(
                 .eachCount()
                 .mapValues { (_, count) -> (count + 1) / 2 }
 
+            val disturbanceCount = nights.sumOf { it.disturbanceCount }
+            val snoreMinutes = nights.sumOf { it.snoreMinutes }
+            val summary = generateSummary(epochs, quality, snoreMinutes)
+
             _uiState.update {
                 it.copy(
-                    sessionId = session.id,
+                    sessionId = nights.first().id,
                     isLoaded = true,
                     totalSleepFormatted = "${hours}ч ${mins}м",
                     sleepOnsetFormatted = onsetStr,
                     wakeUpFormatted = wakeStr,
-                    sleepEfficiency = efficiency,
-                    disturbanceCount = session.disturbanceCount,
-                    snoreMinutes = session.snoreMinutes,
+                    sleepQuality = quality,
+                    disturbanceCount = disturbanceCount,
+                    snoreMinutes = snoreMinutes,
                     epochs = epochs,
                     phaseMinutes = phaseMinutes,
-                    snippets = snippets
+                    snippets = snippets,
+                    dailySummary = summary
                 )
             }
         }
+    }
+
+    private data class Night(
+        val id: Long,
+        val onsetMs: Long,
+        val wakeMs: Long,
+        val sleepMinutes: Int,
+        val timeInBedMinutes: Int,
+        val disturbanceCount: Int,
+        val snoreMinutes: Int
+    )
+
+    /** Все сессии за выбранную ночь: одна сессия по id, все сессии дня по дате, либо последняя. */
+    private suspend fun loadNights(sessionId: Long, date: String?): List<Night> {
+        val sessions = when {
+            !date.isNullOrEmpty() -> {
+                val bounds = dayBounds(date) ?: return emptyList()
+                sleepSessionDao.getSessionsByWakeUpRange(bounds.first, bounds.second)
+            }
+            sessionId > 0 -> listOfNotNull(sleepSessionDao.getSessionById(sessionId))
+            else -> listOfNotNull(sleepSessionDao.getLatestValidSession())
+        }
+        return sessions.mapNotNull { session ->
+            val wakeUpMs = session.wakeUpMs ?: return@mapNotNull null
+            val sleepOnsetMs = session.sleepOnsetMs ?: return@mapNotNull null
+            Night(
+                id = session.id,
+                onsetMs = sleepOnsetMs,
+                wakeMs = wakeUpMs,
+                sleepMinutes = ((wakeUpMs - sleepOnsetMs) / 60_000L).toInt().coerceAtLeast(0),
+                timeInBedMinutes = ((wakeUpMs - session.trackingStartMs) / 60_000L).toInt().coerceAtLeast(1),
+                disturbanceCount = session.disturbanceCount,
+                snoreMinutes = session.snoreMinutes
+            )
+        }
+    }
+
+    /** Границы локальных суток для даты yyyy-MM-dd. */
+    private fun dayBounds(date: String): Pair<Long, Long>? {
+        val format = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).apply { isLenient = false }
+        val parsed = runCatching { format.parse(date) }.getOrNull() ?: return null
+        val cal = Calendar.getInstance().apply { time = parsed }
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        val start = cal.timeInMillis
+        cal.add(Calendar.DAY_OF_YEAR, 1)
+        return start to cal.timeInMillis
+    }
+
+    private fun generateSummary(epochs: List<SleepEpochEntity>, quality: Int, snoreMins: Int): String {
+        val awakeEpochs = epochs.count { it.phase == SleepPhase.AWAKE.name }
+
+        var summary = "Результаты: "
+        if (quality > 80) summary += "Отличное качество сна. "
+        else if (quality > 60) summary += "Неплохое качество сна. "
+        else summary += "Качество сна требует внимания. "
+
+        if (awakeEpochs > 10) summary += "Было много пробуждений. "
+        if (snoreMins > 30) summary += "Много храпа. "
+        if (quality > 80 && awakeEpochs <= 10 && snoreMins <= 30) summary += "Вы отлично выспались!"
+        else summary += "Постарайтесь лечь раньше."
+
+        return summary
     }
 
     /**

@@ -14,6 +14,9 @@ interface SleepSessionDao {
     @Query("SELECT * FROM sleep_sessions WHERE sleepOnsetMs IS NOT NULL AND wakeUpMs IS NOT NULL AND (wakeUpMs - sleepOnsetMs) >= 600000 AND (wakeUpMs - sleepOnsetMs) <= 50400000 ORDER BY trackingStartMs DESC")
     fun getAllValidSessions(): Flow<List<SleepSessionEntity>>
 
+    @Query("SELECT * FROM sleep_sessions WHERE wakeUpMs >= :fromMs AND wakeUpMs < :toMs ORDER BY wakeUpMs ASC")
+    suspend fun getSessionsByWakeUpRange(fromMs: Long, toMs: Long): List<SleepSessionEntity>
+
     @Query("SELECT * FROM sleep_sessions ORDER BY trackingStartMs DESC")
     fun getAllSessions(): Flow<List<SleepSessionEntity>>
 

@@ -35,7 +35,7 @@ fun MainHomeScreen(
     onOpenSettings: () -> Unit,
     onOpenSleepTracking: () -> Unit,
     onOpenHelp: () -> Unit,
-    onOpenSession: (Long) -> Unit
+    onOpenDate: (String) -> Unit
 ) {
     val pagerState = rememberPagerState(pageCount = { 2 })
     val scope = rememberCoroutineScope()
@@ -125,7 +125,7 @@ fun MainHomeScreen(
                 }
                 1 -> {
                     SleepHistoryScreen(
-                        onOpenSession = onOpenSession,
+                        onOpenDate = onOpenDate,
                         showBackButton = false
                     )
                 }
