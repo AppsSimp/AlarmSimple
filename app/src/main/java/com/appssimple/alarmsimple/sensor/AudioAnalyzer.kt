@@ -66,6 +66,9 @@ class AudioAnalyzer @Inject constructor(
     private var lastAnalysisAtMs = 0L
     private var micWatchdogJob: Job? = null
 
+    /** id сессии, чтобы уметь поднять захват заново, если старт не удался. */
+    private var sessionIdForRestart = 0L
+
     /** Последнее значение RMS и момент, с которого оно не меняется (детектор зависшего захвата). */
     @Volatile
     private var lastRmsValue = -1f
@@ -130,6 +133,7 @@ class AudioAnalyzer @Inject constructor(
     @SuppressLint("MissingPermission")
     fun start(sessionId: Long) {
         if (isRunning) return
+        sessionIdForRestart = sessionId
         isRunning = true
         totalSnippetsTonight = 0
 
@@ -181,8 +185,14 @@ class AudioAnalyzer @Inject constructor(
     }
 
     /** Принудительно пересоздаёт AudioRecord (вызывается сторожем из SensorFusion). */
+    @SuppressLint("MissingPermission")
     fun forceRestartMic() {
-        if (!isRunning) return
+        if (!isRunning) {
+            // Захват вообще не поднялся на старте — пробуем инициализировать заново,
+            // иначе микрофон молчит всю ночь (кейс session 78: 25.0 на всех эпохах).
+            if (sessionIdForRestart > 0) start(sessionIdForRestart)
+            return
+        }
         restartAudioRecord()
         lastAnalysisAtMs = System.currentTimeMillis()
         synchronized(bufferLock) {
