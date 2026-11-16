@@ -30,7 +30,8 @@ class UserPreferences @Inject constructor(
         val BACKUP_SYSTEM_ALARM_ENABLED = booleanPreferencesKey("backup_system_alarm_enabled")
         val TEST_RING_BUTTONS_ENABLED = booleanPreferencesKey("test_ring_buttons_enabled")
         val DEBUG_SLEEP_LOGGING_ENABLED = booleanPreferencesKey("debug_sleep_logging_enabled")
-        val FAKE_APPLE_PAY_ENABLED = booleanPreferencesKey("fake_apple_pay_enabled")
+        // Ключ оставлен прежним, чтобы настройка не сбросилась у текущих пользователей
+        val FAKE_PAYMENT_ENABLED = booleanPreferencesKey("fake_apple_pay_enabled")
         val AUTO_SLEEP_TRACKING_ENABLED = booleanPreferencesKey("auto_sleep_tracking_enabled")
         val SLEEP_REMINDER_HOURS = intPreferencesKey("sleep_reminder_hours")
         val SLEEP_REMINDER_LAST_SHOWN_MS = longPreferencesKey("sleep_reminder_last_shown_ms")
@@ -42,8 +43,8 @@ class UserPreferences @Inject constructor(
     val debugSleepLoggingEnabled: Flow<Boolean> = context.dataStore.data
         .map { it[DEBUG_SLEEP_LOGGING_ENABLED] ?: false }
 
-    val fakeApplePayEnabled: Flow<Boolean> = context.dataStore.data
-        .map { it[FAKE_APPLE_PAY_ENABLED] ?: true }
+    val fakePaymentEnabled: Flow<Boolean> = context.dataStore.data
+        .map { it[FAKE_PAYMENT_ENABLED] ?: true }
 
     val autoSleepTrackingEnabled: Flow<Boolean> = context.dataStore.data
         .map { it[AUTO_SLEEP_TRACKING_ENABLED] ?: false }
@@ -120,8 +121,8 @@ class UserPreferences @Inject constructor(
         context.dataStore.edit { it[DEBUG_SLEEP_LOGGING_ENABLED] = enabled }
     }
 
-    suspend fun setFakeApplePayEnabled(enabled: Boolean) {
-        context.dataStore.edit { it[FAKE_APPLE_PAY_ENABLED] = enabled }
+    suspend fun setFakePaymentEnabled(enabled: Boolean) {
+        context.dataStore.edit { it[FAKE_PAYMENT_ENABLED] = enabled }
     }
 
     suspend fun setAutoSleepTrackingEnabled(enabled: Boolean) {

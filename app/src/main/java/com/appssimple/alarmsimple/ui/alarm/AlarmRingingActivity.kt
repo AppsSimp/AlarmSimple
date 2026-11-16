@@ -72,7 +72,7 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
 
     @Inject lateinit var alarmDao: AlarmDao
     @Inject lateinit var userPreferences: com.appssimple.alarmsimple.data.preferences.UserPreferences
-    private var mediaPlayerApplePay: android.media.MediaPlayer? = null
+    private var mediaPlayerPayment: android.media.MediaPlayer? = null
 
     private lateinit var audioManager: AudioManager
     private var nfcAdapter: NfcAdapter? = null
@@ -123,8 +123,8 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
             AlarmSimpleTheme {
                 val coroutineScope = rememberCoroutineScope()
                 var currentAlarm by remember { mutableStateOf<com.appssimple.alarmsimple.data.db.entity.AlarmEntity?>(null) }
-                val isFakeApplePayEnabled by userPreferences.fakeApplePayEnabled.collectAsState(initial = true)
-                var showApplePayOverlay by remember { mutableStateOf(false) }
+                val isFakePaymentEnabled by userPreferences.fakePaymentEnabled.collectAsState(initial = true)
+                var showPaymentOverlay by remember { mutableStateOf(false) }
 
                 LaunchedEffect(alarmId) {
                     if (alarmId != -1L) {
@@ -157,9 +157,9 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
 
                 LaunchedEffect(questSuccessTrigger.value) {
                     if (questSuccessTrigger.value) {
-                        if (questTypeState.value == QuestType.NFC && isFakeApplePayEnabled) {
-                            playApplePayChime()
-                            showApplePayOverlay = true
+                        if (questTypeState.value == QuestType.NFC && isFakePaymentEnabled) {
+                            playPaymentChime()
+                            showPaymentOverlay = true
                         } else {
                             dismissAndFinish()
                         }
@@ -203,10 +203,10 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                     }
                 )
 
-                if (showApplePayOverlay) {
-                    FakeApplePaySuccessOverlay(
+                if (showPaymentOverlay) {
+                    PaymentSuccessOverlay(
                         onAnimationEnd = {
-                            showApplePayOverlay = false
+                            showPaymentOverlay = false
                             dismissAndFinish()
                         }
                     )
@@ -314,7 +314,7 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
         finish()
     }
 
-    private fun playApplePayChime() {
+    private fun playPaymentChime() {
         try {
             // Haptic vibration feedback (double tap feel)
             val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
@@ -331,9 +331,9 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                 vibrator?.vibrate(120)
             }
 
-            // Play synthesized Apple Pay chime
-            mediaPlayerApplePay?.release()
-            mediaPlayerApplePay = android.media.MediaPlayer.create(this, com.appssimple.alarmsimple.R.raw.apple_pay_success)?.apply {
+            // Приятный синтезированный чайм подтверждения
+            mediaPlayerPayment?.release()
+            mediaPlayerPayment = android.media.MediaPlayer.create(this, com.appssimple.alarmsimple.R.raw.payment_success)?.apply {
                 setAudioAttributes(
                     android.media.AudioAttributes.Builder()
                         .setUsage(android.media.AudioAttributes.USAGE_ALARM)
@@ -352,9 +352,9 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
             unregisterReceiver(sirenReceiver)
         } catch (e: Exception) {}
         try {
-            mediaPlayerApplePay?.stop()
-            mediaPlayerApplePay?.release()
-            mediaPlayerApplePay = null
+            mediaPlayerPayment?.stop()
+            mediaPlayerPayment?.release()
+            mediaPlayerPayment = null
         } catch (e: Exception) {}
         super.onDestroy()
     }

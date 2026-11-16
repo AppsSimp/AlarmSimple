@@ -50,7 +50,7 @@ fun SettingsScreen(
     val defaultSmartWake by viewModel.defaultSmartWakeWindow.collectAsState(initial = 30)
     val defaultVolumeLock by viewModel.defaultVolumeLock.collectAsState(initial = false)
     val backupAlarmEnabled by viewModel.backupSystemAlarmEnabled.collectAsState(initial = false)
-    val fakeApplePayEnabled by viewModel.fakeApplePayEnabled.collectAsState(initial = true)
+    val fakePaymentEnabled by viewModel.fakePaymentEnabled.collectAsState(initial = true)
     val autoSleepTrackingEnabled by viewModel.autoSleepTrackingEnabled.collectAsState(initial = false)
     val sleepReminderHours by viewModel.sleepReminderHours.collectAsState(initial = 9)
 
@@ -322,14 +322,14 @@ fun SettingsScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Column(modifier = Modifier.weight(1f)) {
-                                Text("Фейковая оплата Apple Pay (NFC)", fontWeight = FontWeight.SemiBold)
+                                Text("Анимация оплаты (NFC)", fontWeight = FontWeight.SemiBold)
                                 Text(
-                                    "При отключении будильника картой/NFC-меткой показывать анимацию «Оплачено» со звуком Apple Pay",
+                                    "При отключении будильника картой или NFC-меткой показывать анимацию успешной оплаты со звуком",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                            Switch(checked = fakeApplePayEnabled, onCheckedChange = viewModel::setFakeApplePayEnabled)
+                            Switch(checked = fakePaymentEnabled, onCheckedChange = viewModel::setFakePaymentEnabled)
                         }
                     }
                 }
@@ -402,7 +402,7 @@ class SettingsViewModel @Inject constructor(
     val defaultSmartWakeWindow = userPreferences.defaultSmartWakeWindow
     val defaultVolumeLock = userPreferences.defaultVolumeLock
     val backupSystemAlarmEnabled = userPreferences.backupSystemAlarmEnabled
-    val fakeApplePayEnabled = userPreferences.fakeApplePayEnabled
+    val fakePaymentEnabled = userPreferences.fakePaymentEnabled
     val autoSleepTrackingEnabled = userPreferences.autoSleepTrackingEnabled
     val sleepReminderHours = userPreferences.sleepReminderHours
 
@@ -427,8 +427,8 @@ class SettingsViewModel @Inject constructor(
         }
     }
 
-    fun setFakeApplePayEnabled(enabled: Boolean) {
-        viewModelScope.launch { userPreferences.setFakeApplePayEnabled(enabled) }
+    fun setFakePaymentEnabled(enabled: Boolean) {
+        viewModelScope.launch { userPreferences.setFakePaymentEnabled(enabled) }
     }
 
     fun setRetentionDays(days: Int) {
