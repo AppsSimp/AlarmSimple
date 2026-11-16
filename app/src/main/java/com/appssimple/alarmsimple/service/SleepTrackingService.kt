@@ -312,10 +312,20 @@ class SleepTrackingService : Service() {
                         val onset = existing.sleepOnsetMs
                         val sleepDurationMs = if (onset != null) now - onset else 0L
 
-                        // Если сна не было вовсе, реальный сон длился меньше 10 минут (600_000 мс)
-                        // или сессия длится дольше 14 часов (зависший сервис, фейковый «суточник») —
-                        // удаляем мусорную сессию и не засоряем статистику!
-                        if (onset == null || sleepDurationMs < 600_000L || sleepDurationMs > 14 * 3600_000L) {
+                        // Реальная длительность сна — только эпохи LIGHT/REM/DEEP (30 сек каждая).
+                        // AWAKE сном не считается: сессия из одних пробуждений — мусор.
+                        val epochStats = sleepEpochDao.getEpochStatsForSession(currentSessionId)
+                        val hasEpochs = (epochStats?.totalEpochs ?: 0) > 0
+                        val realSleepMs = if (hasEpochs) {
+                            (epochStats!!.totalEpochs - epochStats.awakeEpochs) * 30_000L
+                        } else {
+                            // Датчики ничего не записали — опираемся на границы сессии
+                            sleepDurationMs
+                        }
+
+                        // Сна не было вовсе, реальный сон короче 10 минут или сессия дольше
+                        // 14 часов (зависший сервис) — удаляем и не засоряем статистику.
+                        if (onset == null || realSleepMs < 600_000L || sleepDurationMs > 14 * 3600_000L) {
                             sleepEpochDao.deleteEpochsForSession(currentSessionId)
                             audioSnippetDao.deleteSnippetsForSession(currentSessionId)
                             sleepSessionDao.deleteSession(existing)

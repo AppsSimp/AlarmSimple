@@ -10,6 +10,8 @@ import com.appssimple.alarmsimple.data.db.dao.SleepSessionDao
 import com.appssimple.alarmsimple.data.db.entity.AudioSnippetEntity
 import com.appssimple.alarmsimple.data.db.entity.SleepEpochEntity
 import com.appssimple.alarmsimple.domain.model.SleepPhase
+import com.appssimple.alarmsimple.ui.components.epochSpanMinutes
+import com.appssimple.alarmsimple.ui.components.sleepMinutesFromEpochs
 import com.appssimple.alarmsimple.ui.components.sleepQualityPercent
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -37,7 +39,12 @@ data class SleepStatsUiState(
     val phaseMinutes: Map<String, Int> = emptyMap(),
     val snippets: List<AudioSnippetEntity> = emptyList(),
     val playingSnippetId: Long? = null,
-    val dailySummary: String = ""
+    val dailySummary: String = "",
+    /** Границы ночи (от первого засыпания до последнего пробуждения) — общая шкала гипнограммы. */
+    val nightStartMs: Long = 0L,
+    val nightEndMs: Long = 0L,
+    /** Интервалы каждой сессии внутри объединённой ночи. */
+    val sessionRanges: List<Pair<Long, Long>> = emptyList()
 )
 
 @HiltViewModel
@@ -62,7 +69,7 @@ class SleepStatsViewModel @Inject constructor(
             val quality = sleepQualityPercent(totalSleepMinutes, timeInBedMinutes)
 
             val epochs = nights
-                .flatMap { sleepEpochDao.getEpochsForSessionOnce(it.id) }
+                .flatMap { it.epochs }
                 .sortedBy { it.timestampMs }
                 .let { smoothShortAwakenings(it) }
 
@@ -99,7 +106,10 @@ class SleepStatsViewModel @Inject constructor(
                     epochs = epochs,
                     phaseMinutes = phaseMinutes,
                     snippets = snippets,
-                    dailySummary = summary
+                    dailySummary = summary,
+                    nightStartMs = nights.minOf { it.onsetMs },
+                    nightEndMs = nights.maxOf { it.wakeMs },
+                    sessionRanges = nights.sortedBy { it.onsetMs }.map { it.onsetMs to it.wakeMs }
                 )
             }
         }
@@ -109,6 +119,7 @@ class SleepStatsViewModel @Inject constructor(
         val id: Long,
         val onsetMs: Long,
         val wakeMs: Long,
+        val epochs: List<SleepEpochEntity>,
         val sleepMinutes: Int,
         val timeInBedMinutes: Int,
         val disturbanceCount: Int,
@@ -128,12 +139,24 @@ class SleepStatsViewModel @Inject constructor(
         return sessions.mapNotNull { session ->
             val wakeUpMs = session.wakeUpMs ?: return@mapNotNull null
             val sleepOnsetMs = session.sleepOnsetMs ?: return@mapNotNull null
+            val epochs = sleepEpochDao.getEpochsForSessionOnce(session.id)
+            val hasEpochs = epochs.isNotEmpty()
             Night(
                 id = session.id,
                 onsetMs = sleepOnsetMs,
                 wakeMs = wakeUpMs,
-                sleepMinutes = ((wakeUpMs - sleepOnsetMs) / 60_000L).toInt().coerceAtLeast(0),
-                timeInBedMinutes = ((wakeUpMs - session.trackingStartMs) / 60_000L).toInt().coerceAtLeast(1),
+                epochs = epochs,
+                // Реальная длительность сна — только эпохи LIGHT/REM/DEEP, AWAKE сном не считается.
+                sleepMinutes = if (hasEpochs) {
+                    sleepMinutesFromEpochs(epochs)
+                } else {
+                    ((wakeUpMs - sleepOnsetMs) / 60_000L).toInt().coerceAtLeast(0)
+                },
+                timeInBedMinutes = if (hasEpochs) {
+                    epochSpanMinutes(epochs).coerceAtLeast(1)
+                } else {
+                    ((wakeUpMs - session.trackingStartMs) / 60_000L).toInt().coerceAtLeast(1)
+                },
                 disturbanceCount = session.disturbanceCount,
                 snoreMinutes = session.snoreMinutes
             )

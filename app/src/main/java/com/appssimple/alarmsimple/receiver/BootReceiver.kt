@@ -37,16 +37,24 @@ class BootReceiver : BroadcastReceiver() {
                         val onset = latestSession.sleepOnsetMs ?: latestSession.trackingStartMs
                         val duration = inferredWakeUpMs - onset
 
-                        // Сохраняем сессию только если отслежено 10 минут..14 часов сна.
-                        // Дольше — это зависший сервис и фейковый «суточник», удаляем.
-                        if (duration in 600_000L..14 * 3600_000L) {
+                        // Сохраняем сессию только если реально наспано 10 минут..14 часов.
+                        // AWAKE-эпохи сном не считаются: сессия из одних пробуждений — мусор.
+                        val epochStats = sleepEpochDao.getEpochStatsForSession(latestSession.id)
+                        val hasEpochs = (epochStats?.totalEpochs ?: 0) > 0
+                        val realSleepMs = if (hasEpochs) {
+                            (epochStats!!.totalEpochs - epochStats.awakeEpochs) * 30_000L
+                        } else {
+                            duration
+                        }
+                        if (realSleepMs in 600_000L..14 * 3600_000L) {
                             sleepSessionDao.updateSession(
                                 latestSession.copy(
                                     wakeUpMs = inferredWakeUpMs,
                                     sleepOnsetMs = onset
                                 )
                             )
-                        } else if (duration > 14 * 3600_000L) {
+                        } else {
+                            sleepEpochDao.deleteEpochsForSession(latestSession.id)
                             sleepSessionDao.deleteSession(latestSession)
                         }
                     }

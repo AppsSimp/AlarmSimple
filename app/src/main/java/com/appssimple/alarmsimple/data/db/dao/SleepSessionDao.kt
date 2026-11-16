@@ -46,4 +46,12 @@ interface SleepSessionDao {
 
     @Query("DELETE FROM sleep_sessions WHERE sleepOnsetMs IS NULL OR wakeUpMs IS NULL OR (wakeUpMs - sleepOnsetMs) < 600000 OR (wakeUpMs - sleepOnsetMs) > 50400000")
     suspend fun cleanDiscardedSessions()
+
+    /** Завершённые сессии, в которых не было ни одной эпохи сна — только пробуждения. */
+    @Query(
+        "DELETE FROM sleep_sessions WHERE wakeUpMs IS NOT NULL AND id IN (" +
+            "SELECT sessionId FROM sleep_epochs GROUP BY sessionId " +
+            "HAVING SUM(CASE WHEN phase = 'AWAKE' THEN 1 ELSE 0 END) = COUNT(*))"
+    )
+    suspend fun deleteAwakeOnlySessions()
 }

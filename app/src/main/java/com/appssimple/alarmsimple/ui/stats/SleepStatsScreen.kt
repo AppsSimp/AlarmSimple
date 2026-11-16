@@ -147,7 +147,10 @@ fun SleepStatsScreen(
                             ) {
                                 Text("Фазы сна (Гипнограмма)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                                 if (state.epochs.isNotEmpty()) {
-                                    ModernBadge(text = "${state.epochs.size * 30 / 60} мин", color = BrandSecondary)
+                                    ModernBadge(
+                                        text = "${state.epochs.count { it.phase != SleepPhase.AWAKE.name } * 30 / 60} мин",
+                                        color = BrandSecondary
+                                    )
                                 }
                             }
 
@@ -155,10 +158,24 @@ fun SleepStatsScreen(
 
                             HypnogramChart(
                                 epochs = state.epochs,
+                                windowStartMs = state.nightStartMs,
+                                windowEndMs = state.nightEndMs,
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .height(170.dp)
                             )
+
+                            if (state.sessionRanges.size > 1) {
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    text = "Сессии: " + state.sessionRanges.joinToString(" · ") { (from, to) ->
+                                        "${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(from))}" +
+                                            "–${SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(to))}"
+                                    },
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                     }
                 }
@@ -248,6 +265,8 @@ private fun PhaseLegendBadge(title: String, color: Color) {
 @Composable
 fun HypnogramChart(
     epochs: List<SleepEpochEntity>,
+    windowStartMs: Long = 0L,
+    windowEndMs: Long = 0L,
     modifier: Modifier = Modifier
 ) {
     val phaseColors = mapOf(
@@ -265,8 +284,12 @@ fun HypnogramChart(
     )
 
     val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
-    val startStr = if (epochs.isNotEmpty()) timeFormat.format(Date(epochs.first().timestampMs)) else "--:--"
-    val endStr = if (epochs.isNotEmpty()) timeFormat.format(Date(epochs.last().timestampMs)) else "--:--"
+    val hasWindow = windowEndMs > windowStartMs && windowStartMs > 0L
+    val chartStartMs = if (hasWindow) windowStartMs else (epochs.firstOrNull()?.timestampMs ?: 0L)
+    val chartEndMs = if (hasWindow) windowEndMs
+    else ((epochs.lastOrNull()?.timestampMs ?: 0L) + 30_000L)
+    val startStr = if (epochs.isNotEmpty()) timeFormat.format(Date(chartStartMs)) else "--:--"
+    val endStr = if (epochs.isNotEmpty()) timeFormat.format(Date(chartEndMs)) else "--:--"
 
     Column(modifier = modifier) {
         Row(
@@ -318,8 +341,10 @@ fun HypnogramChart(
 
                 val w = size.width
                 val h = size.height
-                val stepX = w / epochs.size
                 val rowHeight = h / phasesList.size
+                // Общая шкала времени ночи: если сессий несколько, между ними виден разрыв,
+                // а не склеенные подряд эпохи.
+                val windowMs = (chartEndMs - chartStartMs).coerceAtLeast(1L).toFloat()
 
                 // Горизонтальные направляющие линии для каждой строки фазы
                 phasesList.indices.forEach { i ->
@@ -333,7 +358,7 @@ fun HypnogramChart(
                 }
 
                 // Рисуем прямоугольники для каждой эпохи в соответствующей строке
-                epochs.forEachIndexed { index, epoch ->
+                epochs.forEach { epoch ->
                     val rowIdx = when (epoch.phase) {
                         SleepPhase.AWAKE.name -> 0
                         SleepPhase.REM.name -> 1
@@ -345,10 +370,13 @@ fun HypnogramChart(
                     val topY = rowIdx * rowHeight + 2.dp.toPx()
                     val blockHeight = (rowHeight - 4.dp.toPx()).coerceAtLeast(2.dp.toPx())
 
+                    val left = ((epoch.timestampMs - chartStartMs) / windowMs) * w
+                    val right = ((epoch.timestampMs + 30_000L - chartStartMs) / windowMs) * w
+
                     drawRect(
                         color = color,
-                        topLeft = Offset(index * stepX, topY),
-                        size = Size(stepX + 0.6f, blockHeight)
+                        topLeft = Offset(left, topY),
+                        size = Size((right - left).coerceAtLeast(0.8f), blockHeight)
                     )
                 }
             }

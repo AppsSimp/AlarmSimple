@@ -22,6 +22,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.appssimple.alarmsimple.data.db.entity.SleepEpochEntity
+import com.appssimple.alarmsimple.domain.model.SleepPhase
 import com.appssimple.alarmsimple.ui.theme.BrandPrimary
 import java.text.SimpleDateFormat
 import java.util.Calendar
@@ -250,6 +252,19 @@ fun sleepEfficiencyPercent(
 
 /** Целевая длительность сна, при которой «количество» перестаёт быть проблемой. */
 private const val TARGET_SLEEP_MINUTES = 7 * 60
+
+/** Длительность одной эпохи сна в секундах. */
+const val SLEEP_EPOCH_SECONDS = 30
+
+/**
+ * Минуты реального сна по эпохам: AWAKE — это не сон, он в длительность не входит.
+ */
+fun sleepMinutesFromEpochs(epochs: List<SleepEpochEntity>): Int =
+    epochs.count { it.phase != SleepPhase.AWAKE.name } * SLEEP_EPOCH_SECONDS / 60
+
+/** Общая длительность записанных эпох в минутах — фактическое время под наблюдением. */
+fun epochSpanMinutes(epochs: List<SleepEpochEntity>): Int =
+    epochs.size * SLEEP_EPOCH_SECONDS / 60
 
 /**
  * Качество сна в процентах (0..100).

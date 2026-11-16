@@ -23,18 +23,21 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.appssimple.alarmsimple.data.db.dao.SleepEpochDao
 import com.appssimple.alarmsimple.data.db.dao.SleepSessionDao
 import com.appssimple.alarmsimple.data.db.entity.SleepSessionEntity
 import com.appssimple.alarmsimple.data.preferences.UserPreferences
 import com.appssimple.alarmsimple.ui.components.AppBackground
 import com.appssimple.alarmsimple.ui.components.ModernBadge
 import com.appssimple.alarmsimple.ui.components.ModernCard
+import com.appssimple.alarmsimple.ui.components.SLEEP_EPOCH_SECONDS
 import com.appssimple.alarmsimple.ui.components.SleepCalendar
 import com.appssimple.alarmsimple.ui.components.sleepQualityPercent
 import com.appssimple.alarmsimple.ui.theme.BrandPrimary
 import com.appssimple.alarmsimple.ui.theme.BrandSecondary
 import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
@@ -48,10 +51,22 @@ enum class SleepAnalysisPeriod(val label: String) {
     YEAR("Год")
 }
 
+/** Минимум реального сна, ниже которого сессия считается мусорной. */
+private const val MIN_REAL_SLEEP_MINUTES = 10
+
+/** Сессия сна с реальной длительностью (без AWAKE-эпох). */
+data class SessionSleep(
+    val session: SleepSessionEntity,
+    val sleepMinutes: Int,
+    val timeInBedMinutes: Int
+) {
+    val quality: Int get() = sleepQualityPercent(sleepMinutes, timeInBedMinutes)
+}
+
 /** Все сессии за локальную дату пробуждения, объединённые в одну «ночь». */
 private data class CalendarDay(
     val dateKey: String,
-    val sessions: List<SleepSessionEntity>,
+    val sessions: List<SessionSleep>,
     val sleepMinutes: Int,
     val timeInBedMinutes: Int,
     val onsetMs: Long,
@@ -70,35 +85,30 @@ fun SleepHistoryScreen(
     showBackButton: Boolean = true,
     viewModel: SleepHistoryViewModel = hiltViewModel()
 ) {
-    val sessions by viewModel.sessions.collectAsState(initial = emptyList())
+    val sessionNights by viewModel.nights.collectAsState(initial = emptyList())
     var selectedPeriod by remember { mutableStateOf(SleepAnalysisPeriod.WEEK) }
     val snackbarHostState = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
 
     // Дата (локальная, по моменту пробуждения) -> объединённая ночь.
     // Несколько сессий за день (например, поспал 2 часа, потом ещё час) считаются одной ночью.
-    val calendarDays = remember(sessions) {
+    val calendarDays = remember(sessionNights) {
         val keyFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
-        val byDate = LinkedHashMap<String, MutableList<SleepSessionEntity>>()
-        sessions.forEach { session ->
-            val wakeUpMs = session.wakeUpMs ?: return@forEach
-            if (session.sleepOnsetMs == null) return@forEach
-            byDate.getOrPut(keyFormat.format(Date(wakeUpMs))) { mutableListOf() }.add(session)
+        val byDate = LinkedHashMap<String, MutableList<SessionSleep>>()
+        sessionNights.forEach { night ->
+            val wakeUpMs = night.session.wakeUpMs ?: return@forEach
+            byDate.getOrPut(keyFormat.format(Date(wakeUpMs))) { mutableListOf() }.add(night)
         }
-        byDate.mapValues { (dateKey, daySessions) ->
+        byDate.mapValues { (dateKey, dayNights) ->
             CalendarDay(
                 dateKey = dateKey,
-                sessions = daySessions.sortedBy { it.sleepOnsetMs },
-                sleepMinutes = daySessions.sumOf { session ->
-                    ((session.wakeUpMs!! - session.sleepOnsetMs!!) / 60_000L).toInt()
-                },
-                timeInBedMinutes = daySessions.sumOf { session ->
-                    ((session.wakeUpMs!! - session.trackingStartMs) / 60_000L).toInt().coerceAtLeast(1)
-                },
-                onsetMs = daySessions.minOf { it.sleepOnsetMs!! },
-                wakeMs = daySessions.maxOf { it.wakeUpMs!! },
-                disturbanceCount = daySessions.sumOf { it.disturbanceCount },
-                snoreMinutes = daySessions.sumOf { it.snoreMinutes }
+                sessions = dayNights.sortedBy { it.session.sleepOnsetMs },
+                sleepMinutes = dayNights.sumOf { it.sleepMinutes },
+                timeInBedMinutes = dayNights.sumOf { it.timeInBedMinutes },
+                onsetMs = dayNights.minOf { it.session.sleepOnsetMs!! },
+                wakeMs = dayNights.maxOf { it.session.wakeUpMs!! },
+                disturbanceCount = dayNights.sumOf { it.session.disturbanceCount },
+                snoreMinutes = dayNights.sumOf { it.session.snoreMinutes }
             )
         }
     }
@@ -211,11 +221,11 @@ fun SleepHistoryScreen(
                         val dismissState = rememberSwipeToDismissBoxState(
                             confirmValueChange = { dismissVal ->
                                 if (dismissVal == SwipeToDismissBoxValue.EndToStart) {
-                                    night.sessions.forEach { viewModel.deleteSession(it) }
+                                    night.sessions.forEach { viewModel.deleteSession(it.session) }
                                     scope.launch {
                                         val res = snackbarHostState.showSnackbar("Запись удалена", actionLabel = "Отменить")
                                         if (res == SnackbarResult.ActionPerformed) {
-                                            night.sessions.forEach { viewModel.restoreSession(it) }
+                                            night.sessions.forEach { viewModel.restoreSession(it.session) }
                                         }
                                     }
                                     true
@@ -335,7 +345,12 @@ private fun SleepPeriodAnalysisCard(
                     color = Color.White
                 )
                 ModernBadge(
-                    text = if (totalDebtMinutes < -90) "Недосып" else if (totalDebtMinutes > 90) "Пересып" else "В норме",
+                    text = when {
+                        statusColor == Color.Gray -> "Нет данных"
+                        totalDebtMinutes < -90 -> "Недосып"
+                        totalDebtMinutes > 90 -> "Пересып"
+                        else -> "В норме"
+                    },
                     color = statusColor
                 )
             }
@@ -466,9 +481,44 @@ private fun SleepHistoryCardItem(
 @HiltViewModel
 class SleepHistoryViewModel @Inject constructor(
     private val sleepSessionDao: SleepSessionDao,
+    private val sleepEpochDao: SleepEpochDao,
     private val userPreferences: UserPreferences
 ) : ViewModel() {
-    val sessions: Flow<List<SleepSessionEntity>> = sleepSessionDao.getAllValidSessions()
+
+    /**
+     * Ночи с реальной длительностью сна: AWAKE-эпохи сном не считаются.
+     * Сессии, где сна не было вовсе (только пробуждения), отбрасываются.
+     */
+    val nights: Flow<List<SessionSleep>> = combine(
+        sleepSessionDao.getAllValidSessions(),
+        sleepEpochDao.getEpochStats()
+    ) { sessions, epochStats ->
+        val statsBySession = epochStats.associateBy { it.sessionId }
+        sessions.mapNotNull { session ->
+            val wakeUpMs = session.wakeUpMs ?: return@mapNotNull null
+            val sleepOnsetMs = session.sleepOnsetMs ?: return@mapNotNull null
+            val stats = statsBySession[session.id]
+
+            val sleepMinutes: Int
+            val timeInBedMinutes: Int
+            if (stats != null && stats.totalEpochs > 0) {
+                sleepMinutes = (stats.totalEpochs - stats.awakeEpochs) * SLEEP_EPOCH_SECONDS / 60
+                timeInBedMinutes = stats.totalEpochs * SLEEP_EPOCH_SECONDS / 60
+                // Только пробуждения = не сон, такую ночь не показываем
+                if (sleepMinutes < MIN_REAL_SLEEP_MINUTES) return@mapNotNull null
+            } else {
+                // Старые сессии без эпох — считаем по границам сессии
+                sleepMinutes = ((wakeUpMs - sleepOnsetMs) / 60_000L).toInt().coerceAtLeast(0)
+                timeInBedMinutes = ((wakeUpMs - session.trackingStartMs) / 60_000L).toInt().coerceAtLeast(1)
+            }
+
+            SessionSleep(
+                session = session,
+                sleepMinutes = sleepMinutes,
+                timeInBedMinutes = timeInBedMinutes
+            )
+        }
+    }
 
     init {
         viewModelScope.launch {
@@ -477,6 +527,8 @@ class SleepHistoryViewModel @Inject constructor(
                 val cutoff = System.currentTimeMillis() - retentionDays * 24L * 60L * 60L * 1000L
                 sleepSessionDao.deleteSessionsBefore(cutoff)
             }
+            // Чистим уже сохранённые сессии, в которых не было ни одной эпохи сна
+            sleepSessionDao.deleteAwakeOnlySessions()
         }
     }
 
