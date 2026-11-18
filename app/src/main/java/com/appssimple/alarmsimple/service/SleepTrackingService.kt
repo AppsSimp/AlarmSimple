@@ -137,23 +137,24 @@ class SleepTrackingService : Service() {
     }
 
     private fun startTracking(alarmId: Long) {
-        if (_isTracking.value) {
-            // Сервис мог «залипнуть» после Doze: трекинг формально активен, а эпохи не
-            // пишутся часами. Без этой проверки новая ночь дописывалась в старую сессию
-            // (кейс session 67: утренний хвост склеился со следующей ночью).
-            serviceScope.launch {
+        serviceScope.launch {
+            if (_isTracking.value) {
+                // Если трекинг уже был формально активен, закрываем предыдущую сессию
                 val lastEpoch = if (currentSessionId > 0) {
                     sleepEpochDao.getLatestEpochForSession(currentSessionId)
                 } else null
-                val stale = lastEpoch == null ||
-                        System.currentTimeMillis() - lastEpoch.timestampMs > STALE_SESSION_GAP_MS
-                if (!stale) return@launch
                 finishStaleSession(lastEpoch?.timestampMs)
-                doStartTracking(alarmId)
+            } else {
+                // Проверяем, не осталась ли незавершённая «повисшая» сессия в базе
+                val latestSession = sleepSessionDao.getLatestSession()
+                if (latestSession != null && latestSession.wakeUpMs == null) {
+                    val lastEpoch = sleepEpochDao.getLatestEpochForSession(latestSession.id)
+                    val finalizeMs = lastEpoch?.timestampMs ?: latestSession.trackingStartMs
+                    sleepSessionDao.updateSession(latestSession.copy(wakeUpMs = finalizeMs))
+                }
             }
-            return
+            doStartTracking(alarmId)
         }
-        doStartTracking(alarmId)
     }
 
     /** Закрывает «повисшую» сессию по времени последней записанной эпохи. */
@@ -252,6 +253,33 @@ class SleepTrackingService : Service() {
     }
 
     private suspend fun handleEpochState(epochState: com.appssimple.alarmsimple.sensor.FusionEpochState) {
+        // Никогда не дописываем эпохи в сессию, чья последняя эпоха старше 30 минут:
+        // финализируем её временем последней эпохи и открываем новую сессию.
+        val lastEpoch = if (currentSessionId > 0) {
+            sleepEpochDao.getLatestEpochForSession(currentSessionId)
+        } else null
+        if (lastEpoch != null && (epochState.timestampMs - lastEpoch.timestampMs > STALE_SESSION_GAP_MS)) {
+            android.util.Log.w(
+                "SleepTrackingService",
+                "Stale gap > 30 min (gap=${(epochState.timestampMs - lastEpoch.timestampMs) / 60000}m). Finalizing session $currentSessionId and starting new one."
+            )
+            val existing = sleepSessionDao.getSessionById(currentSessionId)
+            if (existing != null && existing.wakeUpMs == null) {
+                sleepSessionDao.updateSession(existing.copy(wakeUpMs = lastEpoch.timestampMs))
+            }
+            // Создаем новую строку сессии и сбрасываем состояние SensorFusion
+            val newSession = SleepSessionEntity(
+                alarmId = targetAlarmId.takeIf { it > 0 },
+                trackingStartMs = epochState.timestampMs
+            )
+            currentSessionId = sleepSessionDao.insertSession(newSession)
+            sleepOnsetMs = null
+            disturbanceCount = 0
+            snoreMinutesCount = 0
+            lastRecordedPhase = null
+            sensorFusion.start(currentSessionId)
+        }
+
         // Record epoch in database
         sleepEpochDao.insertEpoch(
             SleepEpochEntity(

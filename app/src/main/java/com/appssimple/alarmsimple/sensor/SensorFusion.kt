@@ -10,7 +10,7 @@ import javax.inject.Inject
 import javax.inject.Singleton
 
 /** Пауза, после которой считаем, что трекер просто не работал, и не выдумываем сон. */
-private const val MAX_BACKFILL_GAP_MS = 3 * 3600_000L
+private const val MAX_BACKFILL_GAP_MS = 30 * 60_000L
 
 /** Сколько эпох максимум можно восстановить (2 часа). */
 private const val MAX_BACKFILL_EPOCHS = 240
@@ -69,9 +69,14 @@ class SensorFusion @Inject constructor(
     private val recentStillFlags = ArrayDeque<Boolean>()
     private var consecutiveSpeechEpochs = 0
 
-    // Сторож микрофона: если noise floor не меняется много эпох подряд — захват завис
+    // Сторож микрофона: если noise floor не меняется 5 эпох подряд или равен дефолту 25.0
     private var lastNoiseFloorValue = -1f
     private var unchangedNoiseEpochs = 0
+    private var defaultNoiseEpochs = 0
+
+    // Rolling window спокойных эпох (последние 6 эпох ~ 3 мин) для плавного выхода из AWAKE в LIGHT
+    // Терпит редкие изолированные микродвижения.
+    private val recentCalmWindow = ArrayDeque<Boolean>()
 
     // Consecutive stillness epochs inside sleep (used for DEEP sleep entry)
     private var sleepConsecutiveStillEpochs = 0
@@ -104,9 +109,11 @@ class SensorFusion @Inject constructor(
         recentMovementWindow.clear()
         recentQuietStillEpochs.clear()
         recentStillFlags.clear()
+        recentCalmWindow.clear()
         consecutiveSpeechEpochs = 0
         lastNoiseFloorValue = -1f
         unchangedNoiseEpochs = 0
+        defaultNoiseEpochs = 0
         // КРИТИЧНО: сбрасываем метку последней эпохи, иначе новая сессия через несколько
         // часов «бэкфиллит» пропуск и приписывает пользователю до 10 часов сна.
         lastEpochTimestampMs = 0L
@@ -210,19 +217,32 @@ class SensorFusion @Inject constructor(
             else recentAudioClasses.groupingBy { it }.eachCount().maxByOrNull { it.value }?.key
         }
 
-        // Сторож микрофона: noise floor, который не меняется 5 минут подряд, — это зависший
-        // AudioRecord (в логах такие сессии показывали ровную константу 22.8 / 25.0 всю ночь).
+        // Сторож микрофона: если noise_floor_rms равен дефолтному 25.0 в течение 5 эпох подряд
+        // или не меняется вовсе 5 эпох подряд — AudioRecord завис или не запустился.
         val noiseNow = audioAnalyzer.noiseFloorRms
-        if (noiseNow == lastNoiseFloorValue) {
-            unchangedNoiseEpochs++
-            if (unchangedNoiseEpochs >= 10) {
-                android.util.Log.w("SensorFusion", "Microphone noise floor frozen at $noiseNow — restarting AudioRecord")
-                audioAnalyzer.forceRestartMic()
-                unchangedNoiseEpochs = 0
-            }
+        val isDefaultNoise = kotlin.math.abs(noiseNow - 25.0f) < 0.001f
+        if (isDefaultNoise) {
+            defaultNoiseEpochs++
         } else {
-            unchangedNoiseEpochs = 0
+            defaultNoiseEpochs = 0
+        }
+
+        if (lastNoiseFloorValue >= 0f && kotlin.math.abs(noiseNow - lastNoiseFloorValue) < 0.001f) {
+            unchangedNoiseEpochs++
+        } else {
+            unchangedNoiseEpochs = 1
             lastNoiseFloorValue = noiseNow
+        }
+
+        if (defaultNoiseEpochs >= 5 || unchangedNoiseEpochs >= 5) {
+            android.util.Log.w(
+                "SensorFusion",
+                "Microphone watchdog triggered (default25Epochs=$defaultNoiseEpochs, unchangedEpochs=$unchangedNoiseEpochs, noiseFloor=$noiseNow) — restarting AudioRecord"
+            )
+            audioAnalyzer.forceRestartMic()
+            defaultNoiseEpochs = 0
+            unchangedNoiseEpochs = 0
+            lastNoiseFloorValue = -1f
         }
 
         // 2. Track Sleep Onset
@@ -245,8 +265,17 @@ class SensorFusion @Inject constructor(
             // Настоящая речь с движением сбрасывает счётчик тишины
             consecutiveQuietEpochs = 0
         } else {
-            // Фоновый шум (телевизор, речь без движения) лишь слегка уменьшает счётчик
+            // Фоновый шум (телевизор, речь без движения) лишь слегка уменьшает счётчик, не сбрасывая в ноль
             consecutiveQuietEpochs = kotlin.math.max(0, consecutiveQuietEpochs - 1)
+        }
+
+        // Спокойная эпоха для выхода из AWAKE: человек спокоен (нет явного движения, intensity < 0.35, maxDelta < 0.40)
+        // либо храпит/дышит во сне. Терпит изолированные микродвижения (подёргивания).
+        val isCalm = ((!movement.isUserMoving && movement.movementIntensity < 0.35f && movement.maxDelta < 0.40f && !speechIsWake) ||
+                (dominantAudio == AudioClass.SNORE && movement.movementIntensity < 0.50f))
+        recentCalmWindow.addLast(isCalm)
+        if (recentCalmWindow.size > 6) {
+            recentCalmWindow.removeFirst()
         }
 
         // Movement / Stillness evaluation:
@@ -349,14 +378,13 @@ class SensorFusion @Inject constructor(
             }
         }
 
+        val calmCount = recentCalmWindow.count { it }
+        val isCalmEnough = recentCalmWindow.size >= 4 && calmCount >= 4 && (recentCalmWindow.lastOrNull() == true)
+
         if (isFinalWakeupDetected) {
-            // После утреннего подъёма человек бодрствует, но лежать без движения 20 эпох
-            // подряд не требуется: редкие подёргивания не должны растягивать «бодрствование»
-            // на час. Смотрим на долю неподвижных эпох в последних 20 (терпим каждую пятую).
-            val stillInWindow = recentStillFlags.count { it }
-            val windowReady = recentStillFlags.size >= 10
-            val calmEnough = windowReady && stillInWindow >= (recentStillFlags.size * 4) / 5
-            if (!calmEnough) {
+            // После утреннего подъёма человек бодрствует, но если он снова лёг и спокойно спит
+            // 4-6 спокойных эпох (2-3 минуты), возвращаемся в сон, не заставляя лежать абсолютно неподвижно час.
+            if (!isCalmEnough) {
                 sleepConsecutiveStillEpochs = 0
                 remEpochsInBout = 0
                 currentSleepPhase = SleepPhase.AWAKE
@@ -381,6 +409,17 @@ class SensorFusion @Inject constructor(
             remEpochsInBout = 0
             currentSleepPhase = SleepPhase.AWAKE
             return SleepPhase.AWAKE
+        }
+
+        // Если находились в фазе AWAKE (пробуждение, поворот), возвращаемся в LIGHT
+        // только после 4-6 спокойных эпох (2-3 минуты), терпя редкие микродвижения.
+        if (currentSleepPhase == SleepPhase.AWAKE) {
+            if (!isCalmEnough) {
+                sleepConsecutiveStillEpochs = 0
+                remEpochsInBout = 0
+                return SleepPhase.AWAKE
+            }
+            currentSleepPhase = SleepPhase.LIGHT
         }
 
         // --- 3. Шевеления, микродвижения и гистерезис фазы REM ---

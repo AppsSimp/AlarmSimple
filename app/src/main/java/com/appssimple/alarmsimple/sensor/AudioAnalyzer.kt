@@ -64,9 +64,14 @@ class AudioAnalyzer @Inject constructor(
 
     @Volatile
     private var lastAnalysisAtMs = 0L
+
+    @Volatile
+    private var trackingStartTimeMs = 0L
+
     private var micWatchdogJob: Job? = null
 
     /** id сессии, чтобы уметь поднять захват заново, если старт не удался. */
+    @Volatile
     private var sessionIdForRestart = 0L
 
     /** Последнее значение RMS и момент, с которого оно не меняется (детектор зависшего захвата). */
@@ -130,22 +135,46 @@ class AudioAnalyzer @Inject constructor(
         }
     }
 
+    @Synchronized
+    private fun releaseAudioRecordInternal() {
+        val record = audioRecord
+        audioRecord = null
+        if (record != null) {
+            try {
+                if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                    record.stop()
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("AudioAnalyzer", "Error stopping AudioRecord in release: ${e.message}", e)
+            }
+            try {
+                record.release()
+            } catch (e: Exception) {
+                android.util.Log.e("AudioAnalyzer", "Error releasing AudioRecord in release: ${e.message}", e)
+            }
+        }
+    }
+
+    @Synchronized
     @SuppressLint("MissingPermission")
-    fun start(sessionId: Long) {
-        if (isRunning) return
-        sessionIdForRestart = sessionId
-        isRunning = true
-        totalSnippetsTonight = 0
+    private fun startCapture(): Boolean {
+        releaseAudioRecordInternal()
 
         val minBufferSize = AudioRecord.getMinBufferSize(
             sampleRate,
             AudioFormat.CHANNEL_IN_MONO,
             AudioFormat.ENCODING_PCM_16BIT
         )
+        if (minBufferSize == AudioRecord.ERROR || minBufferSize == AudioRecord.ERROR_BAD_VALUE) {
+            android.util.Log.e("AudioAnalyzer", "AudioRecord.getMinBufferSize error: $minBufferSize")
+            isRunning = false
+            return false
+        }
         val bufferSize = max(minBufferSize, BUFFER_SIZE_SAMPLES * 2)
 
+        var record: AudioRecord? = null
         try {
-            audioRecord = AudioRecord(
+            record = AudioRecord(
                 MediaRecorder.AudioSource.MIC,
                 sampleRate,
                 AudioFormat.CHANNEL_IN_MONO,
@@ -153,67 +182,120 @@ class AudioAnalyzer @Inject constructor(
                 bufferSize
             )
 
-            audioRecord?.startRecording()
-
-            lastAnalysisAtMs = System.currentTimeMillis()
-            startMicWatchdog()
-
-            recordingJob = scope.launch {
-                runProcessingLoop(sessionId)
+            if (record.state != AudioRecord.STATE_INITIALIZED) {
+                android.util.Log.e(
+                    "AudioAnalyzer",
+                    "AudioRecord initialization failed, state=${record.state} (expected STATE_INITIALIZED=${AudioRecord.STATE_INITIALIZED})"
+                )
+                try { record.release() } catch (e: Exception) {
+                    android.util.Log.e("AudioAnalyzer", "Error releasing uninitialized AudioRecord: ${e.message}", e)
+                }
+                record = null
+                isRunning = false
+                return false
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
+
+            record.startRecording()
+            if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+                android.util.Log.e(
+                    "AudioAnalyzer",
+                    "AudioRecord startRecording failed, recordingState=${record.recordingState} (expected RECORDSTATE_RECORDING=${AudioRecord.RECORDSTATE_RECORDING})"
+                )
+                try { record.stop() } catch (ignored: Exception) {}
+                try { record.release() } catch (e: Exception) {
+                    android.util.Log.e("AudioAnalyzer", "Error releasing failed AudioRecord: ${e.message}", e)
+                }
+                record = null
+                isRunning = false
+                return false
+            }
+
+            audioRecord = record
+            isRunning = true
+            android.util.Log.i("AudioAnalyzer", "AudioRecord started successfully, sampleRate=$sampleRate, bufferSize=$bufferSize")
+            return true
+        } catch (e: Throwable) {
+            android.util.Log.e("AudioAnalyzer", "Exception during AudioRecord creation/start: ${e.message}", e)
+            if (record != null) {
+                try { record.stop() } catch (ignored: Exception) {}
+                try { record.release() } catch (releaseEx: Exception) {
+                    android.util.Log.e("AudioAnalyzer", "Error releasing AudioRecord after exception: ${releaseEx.message}", releaseEx)
+                }
+            }
+            audioRecord = null
             isRunning = false
+            return false
         }
     }
 
-    fun stop() {
-        if (!isRunning) return
-        isRunning = false
+    @Synchronized
+    @SuppressLint("MissingPermission")
+    fun start(sessionId: Long) {
+        sessionIdForRestart = sessionId
+        totalSnippetsTonight = 0
+        lastAnalysisAtMs = System.currentTimeMillis()
+        trackingStartTimeMs = System.currentTimeMillis()
+
+        startCapture()
+        startMicWatchdog()
+
         recordingJob?.cancel()
-        recordingJob = null
+        recordingJob = scope.launch {
+            runProcessingLoop(sessionId)
+        }
+    }
+
+    @Synchronized
+    fun stop() {
+        sessionIdForRestart = 0L
+        isRunning = false
         micWatchdogJob?.cancel()
         micWatchdogJob = null
+        recordingJob?.cancel()
+        recordingJob = null
 
-        try {
-            audioRecord?.stop()
-            audioRecord?.release()
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
-        audioRecord = null
+        releaseAudioRecordInternal()
     }
 
-    /** Принудительно пересоздаёт AudioRecord (вызывается сторожем из SensorFusion). */
+    /** Принудительно пересоздаёт AudioRecord (вызывается сторожем из SensorFusion или AudioAnalyzer). */
+    @Synchronized
     @SuppressLint("MissingPermission")
     fun forceRestartMic() {
-        if (!isRunning) {
-            // Захват вообще не поднялся на старте — пробуем инициализировать заново,
-            // иначе микрофон молчит всю ночь (кейс session 78: 25.0 на всех эпохах).
-            if (sessionIdForRestart > 0) start(sessionIdForRestart)
-            return
+        if (sessionIdForRestart <= 0L) return
+        android.util.Log.w("AudioAnalyzer", "forceRestartMic invoked (isRunning=$isRunning, sessionId=$sessionIdForRestart)")
+        val success = startCapture()
+        if (success) {
+            lastAnalysisAtMs = System.currentTimeMillis()
+            synchronized(bufferLock) {
+                rmsUnchangedSinceMs = 0L
+                lastRmsValue = -1f
+            }
         }
-        restartAudioRecord()
-        lastAnalysisAtMs = System.currentTimeMillis()
-        synchronized(bufferLock) {
-            rmsUnchangedSinceMs = 0L
-            lastRmsValue = -1f
+        if (recordingJob == null || recordingJob?.isActive != true) {
+            recordingJob = scope.launch {
+                runProcessingLoop(sessionIdForRestart)
+            }
         }
     }
 
     /**
-     * Сторож захвата: если анализ не отдаёт результаты дольше 90 секунд, значит
-     * AudioRecord «залип» и молча возвращает пустоту — пересоздаём его.
+     * Сторож захвата: перезапускает захват, если:
+     * - захват не был запущен (isRunning == false)
+     * - анализ не отдаёт результаты дольше 90 секунд
      */
     private fun startMicWatchdog() {
         micWatchdogJob?.cancel()
         micWatchdogJob = scope.launch {
-            while (isActive && isRunning) {
+            while (isActive && sessionIdForRestart > 0L) {
                 delay(30_000L)
-                if (!isRunning) break
-                val sinceLast = System.currentTimeMillis() - lastAnalysisAtMs
-                if (sinceLast > 90_000L) {
-                    android.util.Log.w("AudioAnalyzer", "No audio analysis for ${sinceLast / 1000}s — restarting AudioRecord")
+                if (sessionIdForRestart <= 0L) break
+                val now = System.currentTimeMillis()
+                val sinceLast = if (lastAnalysisAtMs > 0L) now - lastAnalysisAtMs else (now - trackingStartTimeMs)
+                if (!isRunning || sinceLast > 90_000L) {
+                    android.util.Log.w(
+                        "AudioAnalyzer",
+                        "Watchdog triggered: isRunning=$isRunning, sinceLastAnalysis=${sinceLast / 1000}s — restarting AudioRecord"
+                    )
                     forceRestartMic()
                 }
             }
@@ -221,36 +303,8 @@ class AudioAnalyzer @Inject constructor(
     }
 
     @Synchronized
-    private fun restartAudioRecord() {
-        try {
-            audioRecord?.stop()
-            audioRecord?.release()
-        } catch (ignored: Exception) {}
-        audioRecord = null
-
-        try {
-            val minBufferSize = AudioRecord.getMinBufferSize(
-                sampleRate,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT
-            )
-            val bufferSize = max(minBufferSize, BUFFER_SIZE_SAMPLES * 2)
-            val newRecord = AudioRecord(
-                MediaRecorder.AudioSource.MIC,
-                sampleRate,
-                AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT,
-                bufferSize
-            )
-            if (newRecord.state == AudioRecord.STATE_INITIALIZED) {
-                newRecord.startRecording()
-                audioRecord = newRecord
-            } else {
-                newRecord.release()
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+    private fun restartAudioRecord(): Boolean {
+        return startCapture()
     }
 
     private suspend fun runProcessingLoop(sessionId: Long) {
@@ -258,10 +312,9 @@ class AudioAnalyzer @Inject constructor(
         val byteBuffer = ByteArray(BUFFER_SIZE_SAMPLES * 2)
         var errorCount = 0
 
-        while (isRunning && currentCoroutineContext().isActive) {
-            val record = audioRecord
-            if (record == null || record.state != AudioRecord.STATE_INITIALIZED) {
-                restartAudioRecord()
+        while (sessionIdForRestart > 0L && currentCoroutineContext().isActive) {
+            val record = synchronized(this) { audioRecord }
+            if (record == null || record.state != AudioRecord.STATE_INITIALIZED || !isRunning) {
                 delay(300)
                 continue
             }
@@ -269,12 +322,14 @@ class AudioAnalyzer @Inject constructor(
             val readCount = try {
                 record.read(readBuffer, 0, BUFFER_SIZE_SAMPLES)
             } catch (e: Exception) {
+                android.util.Log.e("AudioAnalyzer", "AudioRecord read exception: ${e.message}", e)
                 -1
             }
 
             if (readCount <= 0) {
                 errorCount++
                 if (errorCount >= 5) {
+                    android.util.Log.w("AudioAnalyzer", "readCount <= 0 for 5 times (code=$readCount) — restarting AudioRecord")
                     restartAudioRecord()
                     errorCount = 0
                     delay(500)
