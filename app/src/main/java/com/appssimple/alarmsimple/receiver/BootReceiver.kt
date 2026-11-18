@@ -33,29 +33,34 @@ class BootReceiver : BroadcastReceiver() {
                     if (latestSession != null && latestSession.wakeUpMs == null) {
                         // Сессия была оборвана (например, ночной перезагрузкой ОС)
                         val lastEpoch = sleepEpochDao.getLatestEpochForSession(latestSession.id)
-                        val inferredWakeUpMs = lastEpoch?.timestampMs ?: (latestSession.trackingStartMs + 30 * 60_000L)
+                        val nowMs = System.currentTimeMillis()
+                        // Никаких «+30 минут от старта»: без эпох время пробуждения неизвестно,
+                        // а выдуманное значение даёт фантомные ночи в будущем.
+                        val inferredWakeUpMs = minOf(lastEpoch?.timestampMs ?: nowMs, nowMs)
                         val onset = latestSession.sleepOnsetMs ?: latestSession.trackingStartMs
                         val duration = inferredWakeUpMs - onset
 
                         // Сохраняем сессию только если реально наспано 10 минут..14 часов.
                         // AWAKE-эпохи сном не считаются: сессия из одних пробуждений — мусор.
                         val epochStats = sleepEpochDao.getEpochStatsForSession(latestSession.id)
-                        val hasEpochs = (epochStats?.totalEpochs ?: 0) > 0
-                        val realSleepMs = if (hasEpochs) {
-                            (epochStats!!.totalEpochs - epochStats.awakeEpochs) * 30_000L
-                        } else {
-                            duration
-                        }
-                        if (realSleepMs in 600_000L..14 * 3600_000L) {
-                            sleepSessionDao.updateSession(
-                                latestSession.copy(
-                                    wakeUpMs = inferredWakeUpMs,
-                                    sleepOnsetMs = onset
-                                )
-                            )
-                        } else {
+                        val stats = epochStats
+                        if (stats == null || stats.totalEpochs <= 0 || lastEpoch == null) {
+                            // Датчики не записали ни одной эпохи — сохранять нечего
                             sleepEpochDao.deleteEpochsForSession(latestSession.id)
                             sleepSessionDao.deleteSession(latestSession)
+                        } else {
+                            val realSleepMs = (stats.totalEpochs - stats.awakeEpochs) * 30_000L
+                            if (realSleepMs in 600_000L..14 * 3600_000L && duration > 0) {
+                                sleepSessionDao.updateSession(
+                                    latestSession.copy(
+                                        wakeUpMs = inferredWakeUpMs,
+                                        sleepOnsetMs = onset
+                                    )
+                                )
+                            } else {
+                                sleepEpochDao.deleteEpochsForSession(latestSession.id)
+                                sleepSessionDao.deleteSession(latestSession)
+                            }
                         }
                     }
 

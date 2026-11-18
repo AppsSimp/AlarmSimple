@@ -137,6 +137,28 @@ class SleepTrackingService : Service() {
     }
 
     private fun startTracking(alarmId: Long) {
+        // Без RECORD_AUDIO сервис не сможет стать microphone-FGS, AudioRecord упадёт,
+        // а ночь запишется «мёртвой» константой 25.0. Лучше не начинать вовсе.
+        if (androidx.core.content.ContextCompat.checkSelfPermission(
+                this, android.Manifest.permission.RECORD_AUDIO
+            ) != android.content.pm.PackageManager.PERMISSION_GRANTED
+        ) {
+            android.util.Log.e(
+                "SleepTrackingService",
+                "RECORD_AUDIO not granted — sleep tracking is not started"
+            )
+            try {
+                android.widget.Toast.makeText(
+                    this,
+                    "Нет доступа к микрофону: разрешите его в настройках, иначе трекинг сна не работает",
+                    android.widget.Toast.LENGTH_LONG
+                ).show()
+            } catch (ignored: Exception) {
+            }
+            stopSelf()
+            return
+        }
+
         serviceScope.launch {
             if (_isTracking.value) {
                 // Если трекинг уже был формально активен, закрываем предыдущую сессию
