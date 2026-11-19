@@ -119,6 +119,17 @@ class AudioAnalyzer @Inject constructor(
     var noiseFloorRms = 25f // Start at realistic night bedroom silence level to avoid calibration drops
         private set
 
+    @Volatile
+    var micCapturing: Boolean = false
+        private set
+
+    @Volatile
+    var micRestartCount: Int = 0
+        private set
+
+    val snippetsRecorded: Int
+        get() = totalSnippetsTonight
+
     // --- Признаки для классификации (доступ только из главного цикла чтения) ---
     private val recentRmsWindow = ArrayDeque<Float>()   // последние ~2 сек RMS (взрывность старта)
     private var recentRmsAvg = 0f
@@ -169,6 +180,7 @@ class AudioAnalyzer @Inject constructor(
     private fun releaseAudioRecordInternal() {
         val record = audioRecord
         audioRecord = null
+        micCapturing = false
         if (record != null) {
             try {
                 if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
@@ -198,6 +210,7 @@ class AudioAnalyzer @Inject constructor(
         if (minBufferSize == AudioRecord.ERROR || minBufferSize == AudioRecord.ERROR_BAD_VALUE) {
             android.util.Log.e("AudioAnalyzer", "AudioRecord.getMinBufferSize error: $minBufferSize")
             isRunning = false
+            micCapturing = false
             return false
         }
         val bufferSize = max(minBufferSize, BUFFER_SIZE_SAMPLES * 2)
@@ -222,6 +235,7 @@ class AudioAnalyzer @Inject constructor(
                 }
                 record = null
                 isRunning = false
+                micCapturing = false
                 return false
             }
 
@@ -237,10 +251,13 @@ class AudioAnalyzer @Inject constructor(
                 }
                 record = null
                 isRunning = false
+                micCapturing = false
                 return false
             }
 
             audioRecord = record
+            micRestartCount++
+            micCapturing = true
             isRunning = true
             android.util.Log.i("AudioAnalyzer", "AudioRecord started successfully, sampleRate=$sampleRate, bufferSize=$bufferSize")
             return true
@@ -254,6 +271,7 @@ class AudioAnalyzer @Inject constructor(
             }
             audioRecord = null
             isRunning = false
+            micCapturing = false
             return false
         }
     }
@@ -263,6 +281,7 @@ class AudioAnalyzer @Inject constructor(
     fun start(sessionId: Long) {
         sessionIdForRestart = sessionId
         totalSnippetsTonight = 0
+        micRestartCount = 0
         lastSnippetRecordedTimeMs = 0L
         lastAnalysisAtMs = System.currentTimeMillis()
         trackingStartTimeMs = System.currentTimeMillis()
@@ -281,6 +300,7 @@ class AudioAnalyzer @Inject constructor(
     fun stop() {
         sessionIdForRestart = 0L
         isRunning = false
+        micCapturing = false
         micWatchdogJob?.cancel()
         micWatchdogJob = null
         recordingJob?.cancel()
@@ -347,18 +367,27 @@ class AudioAnalyzer @Inject constructor(
 
     @Synchronized
     private fun pauseAudioRecord(): Boolean {
-        val record = audioRecord ?: return false
+        val record = audioRecord ?: run {
+            micCapturing = false
+            return false
+        }
         return try {
             if (record.state == AudioRecord.STATE_INITIALIZED) {
                 if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
                     record.stop()
                 }
-                record.recordingState == AudioRecord.RECORDSTATE_STOPPED
+                val stopped = record.recordingState == AudioRecord.RECORDSTATE_STOPPED
+                if (stopped) {
+                    micCapturing = false
+                }
+                stopped
             } else {
+                micCapturing = false
                 false
             }
         } catch (e: Throwable) {
             android.util.Log.e("AudioAnalyzer", "Error stopping AudioRecord for duty cycle: ${e.message}", e)
+            micCapturing = false
             false
         }
     }
@@ -374,7 +403,11 @@ class AudioAnalyzer @Inject constructor(
             if (record.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
                 record.startRecording()
             }
-            record.recordingState == AudioRecord.RECORDSTATE_RECORDING
+            val ok = record.recordingState == AudioRecord.RECORDSTATE_RECORDING
+            if (ok) {
+                micCapturing = true
+            }
+            ok
         } catch (e: Throwable) {
             android.util.Log.e("AudioAnalyzer", "Error resuming AudioRecord for duty cycle: ${e.message}", e)
             false
@@ -388,6 +421,7 @@ class AudioAnalyzer @Inject constructor(
         if (remainingIdleMs <= 50L) return
 
         val stopped = pauseAudioRecord()
+        micCapturing = false
         val needRecreateOnResume = !stopped
         if (!stopped) {
             android.util.Log.w(
@@ -432,6 +466,7 @@ class AudioAnalyzer @Inject constructor(
             if (record != null && record.state == AudioRecord.STATE_INITIALIZED &&
                 record.recordingState == AudioRecord.RECORDSTATE_RECORDING
             ) {
+                micCapturing = true
                 true
             } else if (needRecreateOnResume || record == null || record.state != AudioRecord.STATE_INITIALIZED) {
                 startCapture()
