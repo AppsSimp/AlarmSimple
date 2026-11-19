@@ -84,6 +84,9 @@ class SleepTrackingService : Service() {
         /** Если эпох нет дольше 30 минут, считаем прежний трекинг «повисшим». */
         private const val STALE_SESSION_GAP_MS = 30 * 60_000L
 
+        /** Таймаут короткого пакета удержания WakeLock (90-120 сек) вместо удержания на всю ночь. */
+        const val WAKE_LOCK_BURST_TIMEOUT_MS = 100_000L
+
         private val _isTracking = MutableStateFlow(false)
         val isTracking: StateFlow<Boolean> = _isTracking.asStateFlow()
 
@@ -101,8 +104,23 @@ class SleepTrackingService : Service() {
             "AlarmSimple::SleepTrackingWakeLock"
         ).apply {
             setReferenceCounted(false)
-            acquire(11 * 60 * 60 * 1000L) // 11 hours maximum safety timeout
         }
+    }
+
+    private fun acquireWakeLockBurst(timeoutMs: Long = WAKE_LOCK_BURST_TIMEOUT_MS) {
+        try {
+            wakeLock?.acquire(timeoutMs)
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    private fun releaseWakeLock() {
+        try {
+            if (wakeLock?.isHeld == true) {
+                wakeLock?.release()
+            }
+        } catch (ignored: Exception) {}
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -116,11 +134,7 @@ class SleepTrackingService : Service() {
             }
             ACTION_HEARTBEAT -> {
                 if (_isTracking.value) {
-                    try {
-                        if (wakeLock?.isHeld != true) {
-                            wakeLock?.acquire(11 * 60 * 60 * 1000L)
-                        }
-                    } catch (ignored: Exception) {}
+                    acquireWakeLockBurst()
                     com.appssimple.alarmsimple.receiver.SleepHeartbeatReceiver.scheduleNext(this)
 
                     // Сторож: сессия не может длиться больше 14 часов. Если сервис пережил день
@@ -131,7 +145,10 @@ class SleepTrackingService : Service() {
                     }
                 }
             }
-            else -> stopSelf()
+            else -> {
+                releaseWakeLock()
+                stopSelf()
+            }
         }
         return START_NOT_STICKY
     }
@@ -184,6 +201,7 @@ class SleepTrackingService : Service() {
         sensorFusion.stop()
         audioAnalyzer.stop()
         silentAudioPlayer.stop()
+        releaseWakeLock()
         if (currentSessionId > 0) {
             val existing = sleepSessionDao.getSessionById(currentSessionId)
             if (existing != null && existing.wakeUpMs == null) {
@@ -213,14 +231,8 @@ class SleepTrackingService : Service() {
         _isTracking.value = true
         _trackingStartMs.value = System.currentTimeMillis()
 
-        // Железобетонное удержание процессора:
-        try {
-            if (wakeLock?.isHeld != true) {
-                wakeLock?.acquire(12 * 60 * 60 * 1000L)
-            }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        // Кратковременный пакетный WakeLock на старт трекинга вместо удержания на 12 часов:
+        acquireWakeLockBurst()
 
         // Запуск системного AlarmManager Heartbeat каждые 8 минут.
         // AlarmManager.setExactAndAllowWhileIdle выводит устройство из Doze Mode,
@@ -275,6 +287,9 @@ class SleepTrackingService : Service() {
     }
 
     private suspend fun handleEpochState(epochState: com.appssimple.alarmsimple.sensor.FusionEpochState) {
+        // Продлеваем пакетный таймаут WakeLock при получении эпохи сенсоров
+        acquireWakeLockBurst()
+
         // Никогда не дописываем эпохи в сессию, чья последняя эпоха старше 30 минут:
         // финализируем её временем последней эпохи и открываем новую сессию.
         val lastEpoch = if (currentSessionId > 0) {
@@ -384,6 +399,7 @@ class SleepTrackingService : Service() {
 
     private fun stopTracking() {
         if (!_isTracking.value) {
+            releaseWakeLock()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return
@@ -432,11 +448,7 @@ class SleepTrackingService : Service() {
             }
 
             cancelHeartbeat()
-            try {
-                if (wakeLock?.isHeld == true) {
-                    wakeLock?.release()
-                }
-            } catch (e: Exception) {}
+            releaseWakeLock()
 
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -525,7 +537,7 @@ class SleepTrackingService : Service() {
         _trackingStartMs.value = 0L
         serviceScope.cancel()
         silentAudioPlayer.stop()
-        wakeLock?.let { if (it.isHeld) it.release() }
+        releaseWakeLock()
         super.onDestroy()
     }
 }

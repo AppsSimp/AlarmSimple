@@ -23,8 +23,11 @@ import androidx.compose.ui.unit.sp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.appssimple.alarmsimple.data.db.dao.AudioSnippetDao
 import com.appssimple.alarmsimple.data.db.dao.SleepEpochDao
 import com.appssimple.alarmsimple.data.db.dao.SleepSessionDao
+import com.appssimple.alarmsimple.data.db.entity.AudioSnippetEntity
+import com.appssimple.alarmsimple.data.db.entity.SleepEpochEntity
 import com.appssimple.alarmsimple.data.db.entity.SleepSessionEntity
 import com.appssimple.alarmsimple.data.preferences.UserPreferences
 import com.appssimple.alarmsimple.ui.components.AppBackground
@@ -226,6 +229,8 @@ fun SleepHistoryScreen(
                                         val res = snackbarHostState.showSnackbar("Запись удалена", actionLabel = "Отменить")
                                         if (res == SnackbarResult.ActionPerformed) {
                                             night.sessions.forEach { viewModel.restoreSession(it.session) }
+                                        } else {
+                                            viewModel.discardDeletedSessions()
                                         }
                                     }
                                     true
@@ -482,8 +487,17 @@ private fun SleepHistoryCardItem(
 class SleepHistoryViewModel @Inject constructor(
     private val sleepSessionDao: SleepSessionDao,
     private val sleepEpochDao: SleepEpochDao,
+    private val audioSnippetDao: AudioSnippetDao,
     private val userPreferences: UserPreferences
 ) : ViewModel() {
+
+    /** Данные удалённой сессии, чтобы «Отменить» вернуло ночь целиком, а не пустую карточку. */
+    private data class DeletedSessionData(
+        val epochs: List<SleepEpochEntity>,
+        val snippets: List<AudioSnippetEntity>
+    )
+
+    private val deletedSessions = mutableMapOf<Long, DeletedSessionData>()
 
     /**
      * Ночи с реальной длительностью сна: AWAKE-эпохи сном не считаются.
@@ -534,13 +548,36 @@ class SleepHistoryViewModel @Inject constructor(
 
     fun deleteSession(session: SleepSessionEntity) {
         viewModelScope.launch {
+            // Эпохи и звуки удаляются каскадом вместе с сессией — сохраняем их заранее,
+            // иначе после «Отменить» останется карточка без единой эпохи.
+            val epochs = sleepEpochDao.getEpochsForSessionOnce(session.id)
+            val snippets = audioSnippetDao.getSnippetsForSessionOnce(session.id)
+            deletedSessions[session.id] = DeletedSessionData(epochs, snippets)
             sleepSessionDao.deleteSession(session)
         }
     }
 
     fun restoreSession(session: SleepSessionEntity) {
         viewModelScope.launch {
-            sleepSessionDao.insertSession(session)
+            // Если id уже занят новой сессией — восстанавливаем как новую и переносим данные
+            val restoredId = if (sleepSessionDao.getSessionById(session.id) != null) {
+                sleepSessionDao.insertSession(session.copy(id = 0))
+            } else {
+                sleepSessionDao.insertSession(session)
+                session.id
+            }
+            val data = deletedSessions.remove(session.id) ?: return@launch
+            if (data.epochs.isNotEmpty()) {
+                sleepEpochDao.insertEpochs(data.epochs.map { it.copy(id = 0, sessionId = restoredId) })
+            }
+            data.snippets.forEach { snippet ->
+                audioSnippetDao.insertSnippet(snippet.copy(id = 0, sessionId = restoredId))
+            }
         }
+    }
+
+    /** Вызывается, когда пользователь закрыл снекбар без «Отменить». */
+    fun discardDeletedSessions() {
+        deletedSessions.clear()
     }
 }
