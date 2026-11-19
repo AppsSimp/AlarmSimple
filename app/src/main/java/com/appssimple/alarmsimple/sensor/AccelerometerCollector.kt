@@ -60,7 +60,9 @@ class AccelerometerCollector @Inject constructor(
     val epochFlow: SharedFlow<EpochMovementResult> = _epochFlow.asSharedFlow()
 
     private val samplesLock = Any()
-    private val currentSamples = mutableListOf<AccelSample>()
+    private var currentSamples = ArrayList<AccelSample>(MAX_SAMPLES_BUFFER)
+    private var processingSamples = ArrayList<AccelSample>(MAX_SAMPLES_BUFFER)
+    private val magnitudesBuffer = FloatArray(MAX_SAMPLES_BUFFER)
 
     // Low-pass filter for gravity isolation
     private var gravityX = 0f
@@ -75,6 +77,7 @@ class AccelerometerCollector @Inject constructor(
 
     companion object {
         const val SAMPLES_DELAY_US = 200_000 // 5 Hz (200ms)
+        const val BATCH_LATENCY_US = 10_000_000 // 10 seconds batching (sensor hub buffers samples)
         const val EPOCH_DURATION_MS = 30_000L // 30 seconds standard actigraphy epoch
         const val MOVEMENT_NOISE_THRESHOLD = 0.025f // Filter out tiny sensor jitter (m/s^2)
         const val MAX_SAMPLES_BUFFER = 600
@@ -85,11 +88,13 @@ class AccelerometerCollector @Inject constructor(
         isCollecting = true
         synchronized(samplesLock) {
             currentSamples.clear()
+            processingSamples.clear()
         }
         sensorManager.registerListener(
             this,
             accelerometer,
-            SAMPLES_DELAY_US
+            SAMPLES_DELAY_US,
+            BATCH_LATENCY_US
         )
 
         // Master clock ticker: гарантирует выработку эпохи ровно каждые 30 секунд независимо от активности датчиков
@@ -99,9 +104,11 @@ class AccelerometerCollector @Inject constructor(
                 delay(EPOCH_DURATION_MS)
                 val now = System.currentTimeMillis()
                 val samples = synchronized(samplesLock) {
-                    val list = ArrayList(currentSamples)
+                    val temp = currentSamples
+                    currentSamples = processingSamples
+                    processingSamples = temp
                     currentSamples.clear()
-                    list
+                    processingSamples
                 }
                 val epochResult = processEpoch(samples, now)
                 _epochFlow.tryEmit(epochResult)
@@ -117,6 +124,7 @@ class AccelerometerCollector @Inject constructor(
         sensorManager.unregisterListener(this)
         synchronized(samplesLock) {
             currentSamples.clear()
+            processingSamples.clear()
         }
     }
 
@@ -160,7 +168,7 @@ class AccelerometerCollector @Inject constructor(
         var movementIntensity = 0f
         var maxDelta = 0f
         var movementCount = 0
-        val magnitudes = ArrayList<Float>(samples.size)
+        val count = samples.size - 1
 
         for (i in 1 until samples.size) {
             val prev = samples[i - 1]
@@ -178,10 +186,10 @@ class AccelerometerCollector @Inject constructor(
             maxDelta = max(maxDelta, delta)
 
             val mag = sqrt(curr.x * curr.x + curr.y * curr.y + curr.z * curr.z)
-            magnitudes.add(mag)
+            magnitudesBuffer[i - 1] = mag
         }
 
-        val stdDev = calculateStdDev(magnitudes)
+        val stdDev = calculateStdDev(magnitudesBuffer, count)
         // User movement threshold: значительное шевеление в кровати
         val isUserMoving = movementIntensity >= 0.50f || maxDelta >= 0.35f
 
@@ -193,6 +201,21 @@ class AccelerometerCollector @Inject constructor(
             movementCount = movementCount,
             isUserMoving = isUserMoving
         )
+    }
+
+    private fun calculateStdDev(values: FloatArray, count: Int): Float {
+        if (count < 2) return 0f
+        var sum = 0.0
+        for (i in 0 until count) {
+            sum += values[i]
+        }
+        val mean = (sum / count).toFloat()
+        var sumSquared = 0.0
+        for (i in 0 until count) {
+            val diff = values[i] - mean
+            sumSquared += diff * diff
+        }
+        return sqrt(sumSquared / (count - 1)).toFloat()
     }
 
     private fun calculateStdDev(values: List<Float>): Float {

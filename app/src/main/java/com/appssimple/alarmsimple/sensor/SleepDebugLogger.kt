@@ -5,8 +5,11 @@ import android.net.Uri
 import androidx.core.content.FileProvider
 import com.appssimple.alarmsimple.data.preferences.UserPreferences
 import dagger.hilt.android.qualifiers.ApplicationContext
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -33,6 +36,30 @@ class SleepDebugLogger @Inject constructor(
     val logFile: File by lazy { File(context.filesDir, FILE_NAME) }
     private val dateFormat = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
 
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    @Volatile
+    private var isLoggingEnabled = false
+    @Volatile
+    private var isInitialized = false
+
+    init {
+        scope.launch {
+            userPreferences.debugSleepLoggingEnabled.collect { enabled ->
+                isLoggingEnabled = enabled
+                isInitialized = true
+            }
+        }
+    }
+
+    fun start() {
+        if (!isInitialized) {
+            scope.launch {
+                isLoggingEnabled = userPreferences.debugSleepLoggingEnabled.first()
+                isInitialized = true
+            }
+        }
+    }
+
     companion object {
         const val FILE_NAME = "sleep_debug_log.csv"
         private const val CSV_HEADER = "timestamp,time_str,session_id,phase,movement_intensity,max_delta,is_moving,dominant_audio,noise_floor_rms,still_epochs,quiet_epochs,is_onset_detected,sleep_onset_ms\n"
@@ -42,34 +69,42 @@ class SleepDebugLogger @Inject constructor(
         sessionId: Long,
         epochState: FusionEpochState,
         sleepOnsetMs: Long?
-    ) = withContext(Dispatchers.IO) {
-        if (!userPreferences.debugSleepLoggingEnabled.first()) return@withContext
+    ) {
+        if (!isInitialized) {
+            withContext(Dispatchers.IO) {
+                isLoggingEnabled = userPreferences.debugSleepLoggingEnabled.first()
+                isInitialized = true
+            }
+        }
+        if (!isLoggingEnabled) return
 
-        mutex.withLock {
-            try {
-                val exists = logFile.exists() && logFile.length() > 0
-                FileWriter(logFile, true).use { writer ->
-                    if (!exists) {
-                        writer.write(CSV_HEADER)
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                try {
+                    val exists = logFile.exists() && logFile.length() > 0
+                    FileWriter(logFile, true).use { writer ->
+                        if (!exists) {
+                            writer.write(CSV_HEADER)
+                        }
+                        val timeStr = dateFormat.format(Date(epochState.timestampMs))
+                        val line = "${epochState.timestampMs}," +
+                                "$timeStr," +
+                                "$sessionId," +
+                                "${epochState.phase.name}," +
+                                String.format(Locale.US, "%.4f", epochState.movementIntensity) + "," +
+                                String.format(Locale.US, "%.4f", epochState.maxDelta) + "," +
+                                "${epochState.isUserMoving}," +
+                                "${epochState.dominantAudioClass?.name ?: "NONE"}," +
+                                String.format(Locale.US, "%.1f", epochState.noiseFloorRms) + "," +
+                                "${epochState.consecutiveStillEpochs}," +
+                                "${epochState.consecutiveQuietEpochs}," +
+                                "${epochState.isSleepOnsetDetected}," +
+                                "${sleepOnsetMs ?: 0}\n"
+                        writer.write(line)
                     }
-                    val timeStr = dateFormat.format(Date(epochState.timestampMs))
-                    val line = "${epochState.timestampMs}," +
-                            "$timeStr," +
-                            "$sessionId," +
-                            "${epochState.phase.name}," +
-                            String.format(Locale.US, "%.4f", epochState.movementIntensity) + "," +
-                            String.format(Locale.US, "%.4f", epochState.maxDelta) + "," +
-                            "${epochState.isUserMoving}," +
-                            "${epochState.dominantAudioClass?.name ?: "NONE"}," +
-                            String.format(Locale.US, "%.1f", epochState.noiseFloorRms) + "," +
-                            "${epochState.consecutiveStillEpochs}," +
-                            "${epochState.consecutiveQuietEpochs}," +
-                            "${epochState.isSleepOnsetDetected}," +
-                            "${sleepOnsetMs ?: 0}\n"
-                    writer.write(line)
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
             }
         }
     }

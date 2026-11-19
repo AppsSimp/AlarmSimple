@@ -18,6 +18,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlin.math.*
@@ -57,7 +58,16 @@ class AudioAnalyzer @Inject constructor(
 
     private var audioRecord: AudioRecord? = null
     private var recordingJob: Job? = null
+    private var snippetJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    private val isEncodingSnippet = AtomicBoolean(false)
+
+    @Volatile
+    private var lastExternalMediaCheckTimeMs = 0L
+
+    @Volatile
+    private var cachedIsExternalMedia = false
 
     @Volatile
     private var isRunning = false
@@ -130,8 +140,20 @@ class AudioAnalyzer @Inject constructor(
      * Важно: SilentAudioPlayer играет постоянную цифровую тишину через AudioTrack,
      * поэтому стандартный audioManager.isMusicActive возвращает true ВСЕГДА!
      * Чтобы не блокировать анализ ночных звуков и запись храпа, фильтруем наш тихий трек.
+     * Вызовы binder (IPC) к AudioService кэшируются не чаще 1 раза в секунду.
      */
     fun isExternalMediaPlaying(): Boolean {
+        val now = System.currentTimeMillis()
+        if (now - lastExternalMediaCheckTimeMs < 1000L) {
+            return cachedIsExternalMedia
+        }
+        val result = checkExternalMediaPlayingInternal()
+        cachedIsExternalMedia = result
+        lastExternalMediaCheckTimeMs = now
+        return result
+    }
+
+    private fun checkExternalMediaPlayingInternal(): Boolean {
         if (!audioManager.isMusicActive) return false
         if (!silentAudioPlayer.isSilentPlaying) return true
         return try {
@@ -241,6 +263,7 @@ class AudioAnalyzer @Inject constructor(
     fun start(sessionId: Long) {
         sessionIdForRestart = sessionId
         totalSnippetsTonight = 0
+        lastSnippetRecordedTimeMs = 0L
         lastAnalysisAtMs = System.currentTimeMillis()
         trackingStartTimeMs = System.currentTimeMillis()
         isDutyCycleEnabled = true
@@ -262,6 +285,8 @@ class AudioAnalyzer @Inject constructor(
         micWatchdogJob = null
         recordingJob?.cancel()
         recordingJob = null
+        snippetJob?.cancel()
+        snippetJob = null
         idleWakeupSignal?.complete(Unit)
         idleWakeupSignal = null
 
@@ -324,12 +349,14 @@ class AudioAnalyzer @Inject constructor(
     private fun pauseAudioRecord(): Boolean {
         val record = audioRecord ?: return false
         return try {
-            if (record.state == AudioRecord.STATE_INITIALIZED &&
-                record.recordingState == AudioRecord.RECORDSTATE_RECORDING
-            ) {
-                record.stop()
+            if (record.state == AudioRecord.STATE_INITIALIZED) {
+                if (record.recordingState == AudioRecord.RECORDSTATE_RECORDING) {
+                    record.stop()
+                }
+                record.recordingState == AudioRecord.RECORDSTATE_STOPPED
+            } else {
+                false
             }
-            record.recordingState == AudioRecord.RECORDSTATE_STOPPED
         } catch (e: Throwable) {
             android.util.Log.e("AudioAnalyzer", "Error stopping AudioRecord for duty cycle: ${e.message}", e)
             false
@@ -361,18 +388,13 @@ class AudioAnalyzer @Inject constructor(
         if (remainingIdleMs <= 50L) return
 
         val stopped = pauseAudioRecord()
+        val needRecreateOnResume = !stopped
         if (!stopped) {
-            android.util.Log.w("AudioAnalyzer", "pauseAudioRecord failed; falling back to continuous capture mode")
-            isDutyCycleEnabled = false
-            try {
-                val record = synchronized(this) { audioRecord }
-                if (record?.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
-                    record?.startRecording()
-                }
-            } catch (e: Throwable) {
-                restartAudioRecord()
-            }
-            return
+            android.util.Log.w(
+                "AudioAnalyzer",
+                "pauseAudioRecord failed (recordingState != RECORDSTATE_STOPPED); releasing AudioRecord to guarantee capture stops"
+            )
+            releaseAudioRecordInternal()
         }
 
         synchronized(bufferLock) {
@@ -405,17 +427,27 @@ class AudioAnalyzer @Inject constructor(
             return
         }
 
-        val resumed = resumeAudioRecord()
-        if (!resumed) {
-            android.util.Log.w(
-                "AudioAnalyzer",
-                "resumeAudioRecord failed after idle period. Falling back to continuous capture mode."
-            )
-            isDutyCycleEnabled = false
-            val restarted = restartAudioRecord()
-            if (!restarted) {
-                android.util.Log.e("AudioAnalyzer", "Failed to restart AudioRecord during fallback to continuous mode.")
+        val resumed = synchronized(this) {
+            val record = audioRecord
+            if (record != null && record.state == AudioRecord.STATE_INITIALIZED &&
+                record.recordingState == AudioRecord.RECORDSTATE_RECORDING
+            ) {
+                true
+            } else if (needRecreateOnResume || record == null || record.state != AudioRecord.STATE_INITIALIZED) {
+                startCapture()
+            } else {
+                val ok = resumeAudioRecord()
+                if (!ok) {
+                    android.util.Log.w("AudioAnalyzer", "resumeAudioRecord failed after idle period; recreating AudioRecord")
+                    startCapture()
+                } else {
+                    true
+                }
             }
+        }
+
+        if (!resumed) {
+            android.util.Log.e("AudioAnalyzer", "Failed to resume or recreate AudioRecord after idle period")
         }
     }
 
@@ -424,6 +456,8 @@ class AudioAnalyzer @Inject constructor(
         val byteBuffer = ByteArray(BUFFER_SIZE_SAMPLES * 2)
         var errorCount = 0
         var cycleStartTimeMs = System.currentTimeMillis()
+        var lastMediaCheckMs = 0L
+        var isExternalMedia = false
 
         while (sessionIdForRestart > 0L && currentCoroutineContext().isActive) {
             val record = synchronized(this) { audioRecord }
@@ -444,7 +478,6 @@ class AudioAnalyzer @Inject constructor(
                 errorCount++
                 if (errorCount >= 5) {
                     android.util.Log.w("AudioAnalyzer", "readCount <= 0 for 5 times (code=$readCount) — restarting AudioRecord")
-                    isDutyCycleEnabled = false
                     restartAudioRecord()
                     errorCount = 0
                     delay(500)
@@ -455,17 +488,27 @@ class AudioAnalyzer @Inject constructor(
             }
             errorCount = 0
 
-            // Check if external music/video is actively playing on this device
-            val isExternalMedia = isExternalMediaPlaying()
+            val nowMs = System.currentTimeMillis()
 
-            // Convert short array to bytes and write to circular buffer
-            for (i in 0 until readCount) {
-                val s = readBuffer[i].toInt()
-                byteBuffer[i * 2] = (s and 0xFF).toByte()
-                byteBuffer[i * 2 + 1] = ((s shr 8) and 0xFF).toByte()
+            // Check if external music/video is actively playing on this device (throttled to at most once per second)
+            if (nowMs - lastMediaCheckMs >= 1000L) {
+                isExternalMedia = isExternalMediaPlaying()
+                lastMediaCheckMs = nowMs
             }
 
-            writeToCircularBuffer(byteBuffer, readCount * 2)
+            // Avoid per-frame byte-conversion and circular-buffer copy when no snippet is pending and no pre-roll is required
+            val snippetPending = (nowMs < lastSnippetRecordedTimeMs + (postTriggerDurationSec * 1000L)) || isEncodingSnippet.get()
+            val preRollRequired = totalSnippetsTonight < maxSnippetsPerNight &&
+                (nowMs >= lastSnippetRecordedTimeMs + snippetCooldownMs - (preTriggerDurationSec * 1000L))
+
+            if (snippetPending || preRollRequired) {
+                for (i in 0 until readCount) {
+                    val s = readBuffer[i].toInt()
+                    byteBuffer[i * 2] = (s and 0xFF).toByte()
+                    byteBuffer[i * 2 + 1] = ((s shr 8) and 0xFF).toByte()
+                }
+                writeToCircularBuffer(byteBuffer, readCount * 2)
+            }
 
             // Acoustic analysis
             val rms = calculateRms(readBuffer, readCount)
@@ -473,7 +516,6 @@ class AudioAnalyzer @Inject constructor(
 
             // Детектор «застывшего» микрофона: одинаковый RMS дольше 30 секунд при ненулевом
             // уровне невозможен, значит AudioRecord отдаёт кэш/константу — пересоздаём захват.
-            val nowMs = System.currentTimeMillis()
             lastAnalysisAtMs = nowMs
             if (rms == lastRmsValue) {
                 if (rmsUnchangedSinceMs == 0L) rmsUnchangedSinceMs = nowMs
@@ -494,10 +536,9 @@ class AudioAnalyzer @Inject constructor(
                 else -> 0.05f
             }
 
-            val now = System.currentTimeMillis()
             _analysisFlow.tryEmit(
                 AudioAnalysisResult(
-                    timestampMs = now,
+                    timestampMs = nowMs,
                     audioClass = audioClass,
                     rmsAmplitude = rms,
                     snoreLikelihood = snoreLikelihood,
@@ -506,8 +547,8 @@ class AudioAnalyzer @Inject constructor(
             )
 
             // Trigger saving snippet if an interesting acoustic event occurs
-            if (shouldTriggerSnippet(audioClass, deltaOverNoise, now, isExternalMedia)) {
-                triggerSnippetRecording(sessionId, audioClass, rms, now)
+            if (shouldTriggerSnippet(audioClass, deltaOverNoise, nowMs, isExternalMedia)) {
+                triggerSnippetRecording(sessionId, audioClass, rms, nowMs)
             }
 
             // Duty cycle check: per 30-second epoch, capture for ACTIVE_CAPTURE_MS (~12s)
@@ -516,11 +557,12 @@ class AudioAnalyzer @Inject constructor(
             if (isDutyCycleEnabled) {
                 val currentMs = System.currentTimeMillis()
                 val elapsedInCycle = currentMs - cycleStartTimeMs
-                val snippetPending = currentMs < lastSnippetRecordedTimeMs + (postTriggerDurationSec * 1000L)
+                val activeSnippet = (currentMs < lastSnippetRecordedTimeMs + (postTriggerDurationSec * 1000L)) || isEncodingSnippet.get()
 
-                if (elapsedInCycle >= ACTIVE_CAPTURE_MS && !snippetPending) {
+                if (elapsedInCycle >= ACTIVE_CAPTURE_MS && !activeSnippet) {
                     enterIdlePhase(cycleStartTimeMs)
                     cycleStartTimeMs = System.currentTimeMillis()
+                    lastMediaCheckMs = 0L
                     continue
                 }
             }
