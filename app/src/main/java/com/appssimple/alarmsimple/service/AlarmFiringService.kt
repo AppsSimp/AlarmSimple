@@ -21,6 +21,7 @@ import androidx.core.app.NotificationCompat
 import com.appssimple.alarmsimple.AlarmSimpleApp
 import com.appssimple.alarmsimple.R
 import com.appssimple.alarmsimple.data.db.dao.AlarmDao
+import com.appssimple.alarmsimple.domain.model.AlarmMode
 import com.appssimple.alarmsimple.domain.model.QuestType
 import com.appssimple.alarmsimple.ui.alarm.AlarmRingingActivity
 import dagger.hilt.android.AndroidEntryPoint
@@ -291,26 +292,39 @@ class AlarmFiringService : Service() {
                 try {
                     val alarm = alarmDao.getAlarmById(firingAlarmId)
                     if (alarm != null) {
-                        val repeatDays = runCatching {
-                            val arr = org.json.JSONArray(alarm.repeatDays)
-                            (0 until arr.length()).map { arr.getInt(it) }.toSet()
-                        }.getOrDefault(emptySet())
-
-                        if (repeatDays.isNotEmpty() && alarm.targetTimeMs != null) {
-                            val cal = java.util.Calendar.getInstance().apply { timeInMillis = alarm.targetTimeMs }
-                            val nextTrigger = alarmScheduler.calculateNextTriggerTime(
-                                hour = cal.get(java.util.Calendar.HOUR_OF_DAY),
-                                minute = cal.get(java.util.Calendar.MINUTE),
-                                repeatDays = repeatDays,
-                                repeatIntervalWeeks = alarm.repeatIntervalWeeks
-                            )
-                            alarmDao.updateAlarm(alarm.copy(targetTimeMs = nextTrigger, isActive = true))
-                            alarmScheduler.scheduleAlarm(nextTrigger, alarm.id)
-                        } else if (repeatDays.isEmpty()) {
-                            // Разовый будильник после срабатывания полностью деактивируется
+                        if (alarm.mode == AlarmMode.DURATION.name) {
+                            // DURATION alarm has fired and is dismissed
                             alarmScheduler.cancelAlarm(alarm.id)
-                            alarmDao.updateAlarm(alarm.copy(isActive = false))
+                            alarmDao.updateAlarm(alarm.copy(isActive = false, targetTimeMs = null))
                             alarmDao.setAlarmActive(alarm.id, false)
+
+                            // Single wakeup policy (Task 3):
+                            // Cancel/deactivate the CLASSIC alarm of that session if it is still armed for a later time,
+                            // so the user is not woken twice. Do not cancel an unrelated alarm of another day.
+                            handleCompanionClassicAlarmCancellation()
+                        } else {
+                            val repeatDays = runCatching {
+                                val arr = org.json.JSONArray(alarm.repeatDays)
+                                (0 until arr.length()).map { arr.getInt(it) }.toSet()
+                            }.getOrDefault(emptySet())
+
+                            if (repeatDays.isNotEmpty() && alarm.targetTimeMs != null) {
+                                val cal = java.util.Calendar.getInstance().apply { timeInMillis = alarm.targetTimeMs }
+                                val nextTrigger = alarmScheduler.calculateNextTriggerTime(
+                                    hour = cal.get(java.util.Calendar.HOUR_OF_DAY),
+                                    minute = cal.get(java.util.Calendar.MINUTE),
+                                    repeatDays = repeatDays,
+                                    repeatIntervalWeeks = alarm.repeatIntervalWeeks,
+                                    fromTimeMs = alarm.targetTimeMs
+                                )
+                                alarmDao.updateAlarm(alarm.copy(targetTimeMs = nextTrigger, isActive = true))
+                                alarmScheduler.scheduleAlarm(nextTrigger, alarm.id)
+                            } else if (repeatDays.isEmpty()) {
+                                // Разовый будильник после срабатывания полностью деактивируется
+                                alarmScheduler.cancelAlarm(alarm.id)
+                                alarmDao.updateAlarm(alarm.copy(isActive = false))
+                                alarmDao.setAlarmActive(alarm.id, false)
+                            }
                         }
                     }
                 } catch (e: Exception) {
@@ -323,6 +337,54 @@ class AlarmFiringService : Service() {
         } else {
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
+        }
+    }
+
+    private suspend fun handleCompanionClassicAlarmCancellation() {
+        val now = System.currentTimeMillis()
+        val nowCal = java.util.Calendar.getInstance().apply { timeInMillis = now }
+
+        val companionId = SleepTrackingService.companionClassicAlarmId.value
+        val classicAlarm = if (companionId != null && companionId > 0) {
+            alarmDao.getAlarmById(companionId)
+        } else {
+            val activeAlarms = alarmDao.getActiveAlarmsList()
+            activeAlarms.filter { it.mode == AlarmMode.CLASSIC.name && it.targetTimeMs != null && it.targetTimeMs > now }
+                .minByOrNull { it.targetTimeMs!! }
+        }
+
+        if (classicAlarm != null && classicAlarm.isActive && classicAlarm.targetTimeMs != null) {
+            val targetMs = classicAlarm.targetTimeMs
+            if (targetMs > now) {
+                val classicCal = java.util.Calendar.getInstance().apply { timeInMillis = targetMs }
+                val isSameDay = classicCal.get(java.util.Calendar.YEAR) == nowCal.get(java.util.Calendar.YEAR) &&
+                        classicCal.get(java.util.Calendar.DAY_OF_YEAR) == nowCal.get(java.util.Calendar.DAY_OF_YEAR)
+                val isWithinSessionWindow = isSameDay || (targetMs - now in 1..(18 * 3600_000L))
+
+                if (isWithinSessionWindow) {
+                    alarmScheduler.cancelAlarm(classicAlarm.id)
+
+                    val repeatDays = runCatching {
+                        val arr = org.json.JSONArray(classicAlarm.repeatDays)
+                        (0 until arr.length()).map { arr.getInt(it) }.toSet()
+                    }.getOrDefault(emptySet())
+
+                    if (repeatDays.isNotEmpty()) {
+                        val nextTrigger = alarmScheduler.calculateNextTriggerTime(
+                            hour = classicCal.get(java.util.Calendar.HOUR_OF_DAY),
+                            minute = classicCal.get(java.util.Calendar.MINUTE),
+                            repeatDays = repeatDays,
+                            repeatIntervalWeeks = classicAlarm.repeatIntervalWeeks,
+                            fromTimeMs = targetMs
+                        )
+                        alarmDao.updateAlarm(classicAlarm.copy(targetTimeMs = nextTrigger, isActive = true))
+                        alarmScheduler.scheduleAlarm(nextTrigger, classicAlarm.id)
+                    } else {
+                        alarmDao.updateAlarm(classicAlarm.copy(isActive = false))
+                        alarmDao.setAlarmActive(classicAlarm.id, false)
+                    }
+                }
+            }
         }
     }
 

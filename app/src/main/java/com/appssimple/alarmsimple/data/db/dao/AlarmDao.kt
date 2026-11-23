@@ -26,4 +26,10 @@ interface AlarmDao {
     
     @Query("UPDATE alarms SET isActive = :isActive WHERE id = :id")
     suspend fun setAlarmActive(id: Long, isActive: Boolean)
+
+    @Query("UPDATE alarms SET targetTimeMs = :targetTimeMs WHERE id = :id")
+    suspend fun updateAlarmTargetTime(id: Long, targetTimeMs: Long?)
+
+    @Query("SELECT * FROM alarms WHERE isActive = 1")
+    suspend fun getActiveAlarmsList(): List<AlarmEntity>
 }

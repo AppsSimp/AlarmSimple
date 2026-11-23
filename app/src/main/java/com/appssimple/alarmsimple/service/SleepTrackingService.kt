@@ -16,6 +16,7 @@ import com.appssimple.alarmsimple.data.db.dao.AlarmDao
 import com.appssimple.alarmsimple.data.db.dao.AudioSnippetDao
 import com.appssimple.alarmsimple.data.db.dao.SleepEpochDao
 import com.appssimple.alarmsimple.data.db.dao.SleepSessionDao
+import com.appssimple.alarmsimple.data.db.entity.AlarmEntity
 import com.appssimple.alarmsimple.data.db.entity.AudioSnippetEntity
 import com.appssimple.alarmsimple.data.db.entity.SleepEpochEntity
 import com.appssimple.alarmsimple.data.db.entity.SleepSessionEntity
@@ -60,6 +61,7 @@ class SleepTrackingService : Service() {
     private var isSmartWakeEnabled: Boolean = false
     private var smartWakeWindowMinutes: Int = 30
     private var scheduledAlarmTimeMs: Long = 0
+    private var companionClassicAlarmId: Long? = null
 
     private var sleepOnsetMs: Long? = null
     private var disturbanceCount: Int = 0
@@ -104,6 +106,9 @@ class SleepTrackingService : Service() {
 
         private val _scheduledWakeTimeMs = MutableStateFlow<Long?>(null)
         val scheduledWakeTimeMs: StateFlow<Long?> = _scheduledWakeTimeMs.asStateFlow()
+
+        private val _companionClassicAlarmId = MutableStateFlow<Long?>(null)
+        val companionClassicAlarmId: StateFlow<Long?> = _companionClassicAlarmId.asStateFlow()
 
         fun disarm(context: Context) {
             val intent = Intent(context, SleepTrackingService::class.java).apply {
@@ -226,6 +231,12 @@ class SleepTrackingService : Service() {
 
     /** Закрывает «повисшую» сессию по времени последней записанной эпохи. */
     private suspend fun finishStaleSession(lastEpochMs: Long?) {
+        val durationAlarmIdToCancel = if (isDurationMode && targetAlarmId > 0) targetAlarmId else _armedAlarmId.value
+        if (durationAlarmIdToCancel != null && durationAlarmIdToCancel > 0) {
+            alarmScheduler.cancelAlarm(durationAlarmIdToCancel)
+            alarmDao.updateAlarmTargetTime(durationAlarmIdToCancel, null)
+            alarmDao.setAlarmActive(durationAlarmIdToCancel, false)
+        }
         epochCollectorJob?.cancel()
         epochCollectorJob = null
         sensorFusion.stop()
@@ -246,6 +257,8 @@ class SleepTrackingService : Service() {
         _armedAlarmId.value = null
         _armedDurationMinutes.value = null
         _scheduledWakeTimeMs.value = null
+        companionClassicAlarmId = null
+        _companionClassicAlarmId.value = null
         cancelHeartbeat()
     }
 
@@ -259,6 +272,8 @@ class SleepTrackingService : Service() {
         scheduledAlarmTimeMs = 0L
         targetDurationMinutes = 0
         alarmTriggered = false
+        companionClassicAlarmId = null
+        _companionClassicAlarmId.value = null
 
         startForegroundServiceWithNotification()
         _isTracking.value = true
@@ -274,37 +289,62 @@ class SleepTrackingService : Service() {
         scheduleHeartbeat()
 
         serviceScope.launch {
-            val alarm = if (alarmId > 0) {
-                alarmDao.getAlarmById(alarmId)
-            } else {
-                alarmDao.getActiveAlarms().firstOrNull()?.firstOrNull { it.mode == AlarmMode.DURATION.name }
+            val activeAlarms = alarmDao.getActiveAlarmsList()
+            val now = System.currentTimeMillis()
+
+            val nearestClassic = activeAlarms
+                .filter { it.mode == AlarmMode.CLASSIC.name && it.targetTimeMs != null && it.targetTimeMs > now }
+                .minByOrNull { it.targetTimeMs!! }
+
+            val activeDuration = activeAlarms.firstOrNull { it.mode == AlarmMode.DURATION.name }
+            val explicitAlarm = if (alarmId > 0) alarmDao.getAlarmById(alarmId) else null
+
+            // Deterministic target selection:
+            // Prefer an active DURATION alarm if present; otherwise fall back to the nearest active CLASSIC alarm.
+            val primaryAlarm: AlarmEntity? = when {
+                explicitAlarm != null -> explicitAlarm
+                activeDuration != null -> activeDuration
+                nearestClassic != null -> nearestClassic
+                else -> null
             }
-            if (alarm != null) {
-                targetAlarmId = alarm.id
-                isDurationMode = alarm.mode == AlarmMode.DURATION.name
-                targetDurationMinutes = alarm.durationMinutes ?: (7 * 60 + 30)
-                isSmartWakeEnabled = alarm.smartWakeEnabled
-                smartWakeWindowMinutes = alarm.smartWakeWindowMinutes
-                scheduledAlarmTimeMs = alarm.targetTimeMs ?: 0L
+
+            if (primaryAlarm != null) {
+                targetAlarmId = primaryAlarm.id
+                isDurationMode = primaryAlarm.mode == AlarmMode.DURATION.name
+                targetDurationMinutes = primaryAlarm.durationMinutes ?: (7 * 60 + 30)
+                isSmartWakeEnabled = primaryAlarm.smartWakeEnabled
+                smartWakeWindowMinutes = primaryAlarm.smartWakeWindowMinutes
+                scheduledAlarmTimeMs = primaryAlarm.targetTimeMs ?: 0L
 
                 if (isDurationMode) {
-                    _armedAlarmId.value = alarm.id
+                    _armedAlarmId.value = primaryAlarm.id
                     _armedDurationMinutes.value = targetDurationMinutes
-                    _scheduledWakeTimeMs.value = System.currentTimeMillis() + targetDurationMinutes * 60_000L
+                    _scheduledWakeTimeMs.value = now + targetDurationMinutes * 60_000L
+
+                    // Never silently ignore an active CLASSIC alarm while a DURATION alarm exists:
+                    // the session must know both, and whichever fires first wins.
+                    val companion = if (nearestClassic != null && nearestClassic.id != primaryAlarm.id) nearestClassic else null
+                    companionClassicAlarmId = companion?.id
+                    _companionClassicAlarmId.value = companion?.id
                 } else {
                     _armedAlarmId.value = null
                     _armedDurationMinutes.value = null
                     _scheduledWakeTimeMs.value = null
+                    companionClassicAlarmId = null
+                    _companionClassicAlarmId.value = null
                 }
             } else {
+                targetAlarmId = NO_ALARM_ID
                 _armedAlarmId.value = null
                 _armedDurationMinutes.value = null
                 _scheduledWakeTimeMs.value = null
+                companionClassicAlarmId = null
+                _companionClassicAlarmId.value = null
             }
 
             // Create new SleepSession in DB (alarmId is null for manual tracking)
             val session = SleepSessionEntity(
-                alarmId = alarmId.takeIf { it > 0 },
+                alarmId = targetAlarmId.takeIf { it > 0 },
                 trackingStartMs = System.currentTimeMillis()
             )
             currentSessionId = sleepSessionDao.insertSession(session)
@@ -411,34 +451,73 @@ class SleepTrackingService : Service() {
                 scheduledAlarmTimeMs = wakeTimeMs
                 _scheduledWakeTimeMs.value = wakeTimeMs
                 alarmScheduler.scheduleAlarm(wakeTimeMs, targetAlarmId)
+                // Persist computed wake time in Room row so reboot reschedules it correctly
+                alarmDao.updateAlarmTargetTime(targetAlarmId, wakeTimeMs)
             }
         }
 
         // Smart Wake-Up evaluation
-        if (isSmartWakeEnabled && scheduledAlarmTimeMs > 0 && !alarmTriggered) {
+        // Whichever alarm fires first wins: evaluate smart wake for the earlier of duration and classic alarm
+        val effectiveWakeTimeMs: Long
+        val effectiveSmartWakeAlarmId: Long
+        val effectiveSmartWakeEnabled: Boolean
+        val effectiveSmartWakeWindow: Int
+
+        if (isDurationMode && scheduledAlarmTimeMs > 0) {
+            val compId = companionClassicAlarmId
+            val compAlarm = if (compId != null) alarmDao.getAlarmById(compId) else null
+            val compTime = compAlarm?.targetTimeMs
+            if (compTime != null && compTime > 0 && compTime < scheduledAlarmTimeMs) {
+                effectiveWakeTimeMs = compTime
+                effectiveSmartWakeAlarmId = compAlarm.id
+                effectiveSmartWakeEnabled = compAlarm.smartWakeEnabled
+                effectiveSmartWakeWindow = compAlarm.smartWakeWindowMinutes
+            } else {
+                effectiveWakeTimeMs = scheduledAlarmTimeMs
+                effectiveSmartWakeAlarmId = targetAlarmId
+                effectiveSmartWakeEnabled = isSmartWakeEnabled
+                effectiveSmartWakeWindow = smartWakeWindowMinutes
+            }
+        } else if (scheduledAlarmTimeMs > 0) {
+            effectiveWakeTimeMs = scheduledAlarmTimeMs
+            effectiveSmartWakeAlarmId = targetAlarmId
+            effectiveSmartWakeEnabled = isSmartWakeEnabled
+            effectiveSmartWakeWindow = smartWakeWindowMinutes
+        } else {
+            effectiveWakeTimeMs = 0L
+            effectiveSmartWakeAlarmId = NO_ALARM_ID
+            effectiveSmartWakeEnabled = false
+            effectiveSmartWakeWindow = 30
+        }
+
+        if (effectiveSmartWakeEnabled && effectiveWakeTimeMs > 0 && !alarmTriggered) {
             val now = epochState.timestampMs
-            val windowStartMs = scheduledAlarmTimeMs - (smartWakeWindowMinutes * 60_000L)
+            val windowStartMs = effectiveWakeTimeMs - (effectiveSmartWakeWindow * 60_000L)
 
             // Are we inside the smart wake window?
-            if (now in windowStartMs..scheduledAlarmTimeMs) {
+            if (now in windowStartMs..effectiveWakeTimeMs) {
                 // If light sleep phase or movement detected -> trigger alarm right now!
                 if (epochState.isLightPhaseForWakeUp) {
-                    triggerAlarmEarly()
+                    triggerAlarmEarly(effectiveSmartWakeAlarmId)
                 }
             }
         }
     }
 
-    private fun triggerAlarmEarly() {
+    private fun triggerAlarmEarly(alarmIdToTrigger: Long = targetAlarmId) {
         if (alarmTriggered) return
         alarmTriggered = true
 
         if (targetAlarmId > 0) {
             alarmScheduler.cancelAlarm(targetAlarmId)
         }
+        val compId = companionClassicAlarmId
+        if (compId != null && compId > 0) {
+            alarmScheduler.cancelAlarm(compId)
+        }
 
         val alarmIntent = Intent(this, AlarmFiringService::class.java).apply {
-            putExtra(AlarmFiringService.EXTRA_ALARM_ID, targetAlarmId)
+            putExtra(AlarmFiringService.EXTRA_ALARM_ID, alarmIdToTrigger)
             putExtra(AlarmFiringService.EXTRA_EARLY_WAKE, true)
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -449,19 +528,22 @@ class SleepTrackingService : Service() {
     }
 
     fun disarmDurationAlarm() {
-        val alarmIdToDisarm = targetAlarmId
+        val alarmIdToDisarm = targetAlarmId.takeIf { it > 0 } ?: _armedAlarmId.value ?: NO_ALARM_ID
         if (alarmIdToDisarm > 0) {
             alarmScheduler.cancelAlarm(alarmIdToDisarm)
         }
         targetAlarmId = NO_ALARM_ID
         isDurationMode = false
         scheduledAlarmTimeMs = 0L
+        companionClassicAlarmId = null
+        _companionClassicAlarmId.value = null
         _armedAlarmId.value = null
         _armedDurationMinutes.value = null
         _scheduledWakeTimeMs.value = null
 
         if (alarmIdToDisarm > 0) {
             serviceScope.launch {
+                alarmDao.updateAlarmTargetTime(alarmIdToDisarm, null)
                 alarmDao.setAlarmActive(alarmIdToDisarm, false)
             }
         }
@@ -470,6 +552,12 @@ class SleepTrackingService : Service() {
     private fun stopTracking() {
         epochCollectorJob?.cancel()
         epochCollectorJob = null
+
+        val durationAlarmIdToCancel = if (isDurationMode && targetAlarmId > 0) targetAlarmId else _armedAlarmId.value
+        if (durationAlarmIdToCancel != null && durationAlarmIdToCancel > 0) {
+            alarmScheduler.cancelAlarm(durationAlarmIdToCancel)
+        }
+
         if (!_isTracking.value) {
             releaseWakeLock()
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -481,8 +569,14 @@ class SleepTrackingService : Service() {
         _armedAlarmId.value = null
         _armedDurationMinutes.value = null
         _scheduledWakeTimeMs.value = null
+        companionClassicAlarmId = null
+        _companionClassicAlarmId.value = null
 
         serviceScope.launch {
+            if (durationAlarmIdToCancel != null && durationAlarmIdToCancel > 0) {
+                alarmDao.updateAlarmTargetTime(durationAlarmIdToCancel, null)
+                alarmDao.setAlarmActive(durationAlarmIdToCancel, false)
+            }
             silentAudioPlayer.stop()
             sensorFusion.stop()
 
@@ -610,11 +704,17 @@ class SleepTrackingService : Service() {
     override fun onDestroy() {
         epochCollectorJob?.cancel()
         epochCollectorJob = null
+        val durationAlarmIdToCancel = if (isDurationMode && targetAlarmId > 0) targetAlarmId else _armedAlarmId.value
+        if (durationAlarmIdToCancel != null && durationAlarmIdToCancel > 0) {
+            alarmScheduler.cancelAlarm(durationAlarmIdToCancel)
+        }
         _isTracking.value = false
         _trackingStartMs.value = 0L
         _armedAlarmId.value = null
         _armedDurationMinutes.value = null
         _scheduledWakeTimeMs.value = null
+        companionClassicAlarmId = null
+        _companionClassicAlarmId.value = null
         serviceScope.cancel()
         silentAudioPlayer.stop()
         releaseWakeLock()

@@ -58,10 +58,12 @@ class AlarmScheduler @Inject constructor(
         hour: Int,
         minute: Int,
         repeatDays: Set<Int>,
-        repeatIntervalWeeks: Int = 1
+        repeatIntervalWeeks: Int = 1,
+        fromTimeMs: Long = System.currentTimeMillis()
     ): Long {
-        val now = java.util.Calendar.getInstance()
+        val now = java.util.Calendar.getInstance().apply { timeInMillis = fromTimeMs }
         val calendar = java.util.Calendar.getInstance().apply {
+            timeInMillis = fromTimeMs
             set(java.util.Calendar.HOUR_OF_DAY, hour)
             set(java.util.Calendar.MINUTE, minute)
             set(java.util.Calendar.SECOND, 0)
@@ -372,6 +374,14 @@ class AlarmScheduler @Inject constructor(
 
                     if (target != null) {
                         scheduleAlarm(target, alarm.id)
+                    }
+                } else if (alarm.mode == AlarmMode.DURATION.name && alarm.targetTimeMs != null) {
+                    if (alarm.targetTimeMs > now) {
+                        scheduleAlarm(alarm.targetTimeMs, alarm.id)
+                    } else {
+                        // Разовый будильник длительности в прошлом — выключаем
+                        alarmDao.setAlarmActive(alarm.id, false)
+                        alarmDao.updateAlarmTargetTime(alarm.id, null)
                     }
                 }
             }
