@@ -1,12 +1,15 @@
 package com.appssimple.alarmsimple.ui.alarmlist
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.appssimple.alarmsimple.data.db.dao.AlarmDao
 import com.appssimple.alarmsimple.data.db.entity.AlarmEntity
 import com.appssimple.alarmsimple.service.AlarmScheduler
+import com.appssimple.alarmsimple.service.SleepTrackingService
 import com.appssimple.alarmsimple.data.preferences.UserPreferences
 import dagger.hilt.android.lifecycle.HiltViewModel
+import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -20,7 +23,8 @@ import javax.inject.Inject
 class AlarmListViewModel @Inject constructor(
     private val alarmDao: AlarmDao,
     private val alarmScheduler: AlarmScheduler,
-    private val userPreferences: UserPreferences
+    private val userPreferences: UserPreferences,
+    @ApplicationContext private val context: Context
 ) : ViewModel() {
 
     val alarms: Flow<List<AlarmEntity>> = alarmDao.getAllAlarms()
@@ -48,6 +52,14 @@ class AlarmListViewModel @Inject constructor(
 
     fun clearSelection() {
         _selectedAlarmIds.value = emptySet()
+    }
+
+    fun disarmDurationAlarm(alarmId: Long) {
+        SleepTrackingService.disarm(context)
+        viewModelScope.launch {
+            alarmDao.setAlarmActive(alarmId, false)
+            alarmScheduler.cancelAlarm(alarmId)
+        }
     }
 
     fun toggleAlarmActive(alarmId: Long, isActive: Boolean) {

@@ -27,6 +27,7 @@ import com.appssimple.alarmsimple.ui.MainActivity
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import javax.inject.Inject
@@ -50,6 +51,7 @@ class SleepTrackingService : Service() {
 
     private val serviceScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
     private var wakeLock: PowerManager.WakeLock? = null
+    private var epochCollectorJob: Job? = null
 
     private var currentSessionId: Long = 0
     private var targetAlarmId: Long = 0
@@ -69,6 +71,7 @@ class SleepTrackingService : Service() {
         const val NOTIFICATION_ID = 2001
         const val ACTION_START_TRACKING = "com.appssimple.alarmsimple.ACTION_START_TRACKING"
         const val ACTION_STOP_TRACKING = "com.appssimple.alarmsimple.ACTION_STOP_TRACKING"
+        const val ACTION_DISARM_DURATION_ALARM = "com.appssimple.alarmsimple.ACTION_DISARM_DURATION_ALARM"
         const val ACTION_HEARTBEAT = "com.appssimple.alarmsimple.ACTION_HEARTBEAT"
         const val EXTRA_ALARM_ID = "EXTRA_ALARM_ID"
 
@@ -92,6 +95,22 @@ class SleepTrackingService : Service() {
 
         private val _trackingStartMs = MutableStateFlow(0L)
         val trackingStartMs: StateFlow<Long> = _trackingStartMs.asStateFlow()
+
+        private val _armedAlarmId = MutableStateFlow<Long?>(null)
+        val armedAlarmId: StateFlow<Long?> = _armedAlarmId.asStateFlow()
+
+        private val _armedDurationMinutes = MutableStateFlow<Int?>(null)
+        val armedDurationMinutes: StateFlow<Int?> = _armedDurationMinutes.asStateFlow()
+
+        private val _scheduledWakeTimeMs = MutableStateFlow<Long?>(null)
+        val scheduledWakeTimeMs: StateFlow<Long?> = _scheduledWakeTimeMs.asStateFlow()
+
+        fun disarm(context: Context) {
+            val intent = Intent(context, SleepTrackingService::class.java).apply {
+                action = ACTION_DISARM_DURATION_ALARM
+            }
+            context.startService(intent)
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -107,12 +126,16 @@ class SleepTrackingService : Service() {
         }
     }
 
-    private fun acquireWakeLockBurst(timeoutMs: Long = WAKE_LOCK_BURST_TIMEOUT_MS) {
+    private fun acquireWakeLock(timeoutMs: Long = 12 * 3600_000L) {
         try {
             wakeLock?.acquire(timeoutMs)
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    private fun acquireWakeLockBurst(timeoutMs: Long = WAKE_LOCK_BURST_TIMEOUT_MS) {
+        acquireWakeLock(timeoutMs)
     }
 
     private fun releaseWakeLock() {
@@ -132,9 +155,14 @@ class SleepTrackingService : Service() {
             ACTION_STOP_TRACKING -> {
                 stopTracking()
             }
+            ACTION_DISARM_DURATION_ALARM -> {
+                disarmDurationAlarm()
+            }
             ACTION_HEARTBEAT -> {
                 if (_isTracking.value) {
-                    acquireWakeLockBurst()
+                    if (wakeLock?.isHeld != true) {
+                        acquireWakeLock(12 * 3600_000L)
+                    }
                     com.appssimple.alarmsimple.receiver.SleepHeartbeatReceiver.scheduleNext(this)
 
                     // Сторож: сессия не может длиться больше 14 часов. Если сервис пережил день
@@ -150,7 +178,7 @@ class SleepTrackingService : Service() {
                 stopSelf()
             }
         }
-        return START_NOT_STICKY
+        return START_STICKY
     }
 
     private fun startTracking(alarmId: Long) {
@@ -198,6 +226,8 @@ class SleepTrackingService : Service() {
 
     /** Закрывает «повисшую» сессию по времени последней записанной эпохи. */
     private suspend fun finishStaleSession(lastEpochMs: Long?) {
+        epochCollectorJob?.cancel()
+        epochCollectorJob = null
         sensorFusion.stop()
         audioAnalyzer.stop()
         silentAudioPlayer.stop()
@@ -213,6 +243,9 @@ class SleepTrackingService : Service() {
         currentSessionId = 0
         _isTracking.value = false
         _trackingStartMs.value = 0L
+        _armedAlarmId.value = null
+        _armedDurationMinutes.value = null
+        _scheduledWakeTimeMs.value = null
         cancelHeartbeat()
     }
 
@@ -231,8 +264,8 @@ class SleepTrackingService : Service() {
         _isTracking.value = true
         _trackingStartMs.value = System.currentTimeMillis()
 
-        // Кратковременный пакетный WakeLock на старт трекинга вместо удержания на 12 часов:
-        acquireWakeLockBurst()
+        // Непрерывный PARTIAL_WAKE_LOCK на всё время трекинга (длинный таймаут безопасности 12 часов):
+        acquireWakeLock(12 * 3600_000L)
 
         // Запуск системного AlarmManager Heartbeat каждые 8 минут.
         // AlarmManager.setExactAndAllowWhileIdle выводит устройство из Doze Mode,
@@ -241,13 +274,32 @@ class SleepTrackingService : Service() {
         scheduleHeartbeat()
 
         serviceScope.launch {
-            val alarm = if (alarmId > 0) alarmDao.getAlarmById(alarmId) else null
+            val alarm = if (alarmId > 0) {
+                alarmDao.getAlarmById(alarmId)
+            } else {
+                alarmDao.getActiveAlarms().firstOrNull()?.firstOrNull { it.mode == AlarmMode.DURATION.name }
+            }
             if (alarm != null) {
+                targetAlarmId = alarm.id
                 isDurationMode = alarm.mode == AlarmMode.DURATION.name
                 targetDurationMinutes = alarm.durationMinutes ?: (7 * 60 + 30)
                 isSmartWakeEnabled = alarm.smartWakeEnabled
                 smartWakeWindowMinutes = alarm.smartWakeWindowMinutes
                 scheduledAlarmTimeMs = alarm.targetTimeMs ?: 0L
+
+                if (isDurationMode) {
+                    _armedAlarmId.value = alarm.id
+                    _armedDurationMinutes.value = targetDurationMinutes
+                    _scheduledWakeTimeMs.value = System.currentTimeMillis() + targetDurationMinutes * 60_000L
+                } else {
+                    _armedAlarmId.value = null
+                    _armedDurationMinutes.value = null
+                    _scheduledWakeTimeMs.value = null
+                }
+            } else {
+                _armedAlarmId.value = null
+                _armedDurationMinutes.value = null
+                _scheduledWakeTimeMs.value = null
             }
 
             // Create new SleepSession in DB (alarmId is null for manual tracking)
@@ -259,10 +311,11 @@ class SleepTrackingService : Service() {
 
             // Start sensors
             silentAudioPlayer.start()
-        sensorFusion.start(currentSessionId)
+            sensorFusion.start(currentSessionId)
 
             // Listen for sensor events
-            launch {
+            epochCollectorJob?.cancel()
+            epochCollectorJob = serviceScope.launch {
                 sensorFusion.fusionEpochFlow.collect { epochState ->
                     handleEpochState(epochState)
                 }
@@ -287,9 +340,6 @@ class SleepTrackingService : Service() {
     }
 
     private suspend fun handleEpochState(epochState: com.appssimple.alarmsimple.sensor.FusionEpochState) {
-        // Продлеваем пакетный таймаут WakeLock при получении эпохи сенсоров
-        acquireWakeLockBurst()
-
         // Никогда не дописываем эпохи в сессию, чья последняя эпоха старше 30 минут:
         // финализируем её временем последней эпохи и открываем новую сессию.
         val lastEpoch = if (currentSessionId > 0) {
@@ -359,6 +409,7 @@ class SleepTrackingService : Service() {
             if (isDurationMode) {
                 val wakeTimeMs = now + (targetDurationMinutes * 60_000L)
                 scheduledAlarmTimeMs = wakeTimeMs
+                _scheduledWakeTimeMs.value = wakeTimeMs
                 alarmScheduler.scheduleAlarm(wakeTimeMs, targetAlarmId)
             }
         }
@@ -397,7 +448,28 @@ class SleepTrackingService : Service() {
         }
     }
 
+    fun disarmDurationAlarm() {
+        val alarmIdToDisarm = targetAlarmId
+        if (alarmIdToDisarm > 0) {
+            alarmScheduler.cancelAlarm(alarmIdToDisarm)
+        }
+        targetAlarmId = NO_ALARM_ID
+        isDurationMode = false
+        scheduledAlarmTimeMs = 0L
+        _armedAlarmId.value = null
+        _armedDurationMinutes.value = null
+        _scheduledWakeTimeMs.value = null
+
+        if (alarmIdToDisarm > 0) {
+            serviceScope.launch {
+                alarmDao.setAlarmActive(alarmIdToDisarm, false)
+            }
+        }
+    }
+
     private fun stopTracking() {
+        epochCollectorJob?.cancel()
+        epochCollectorJob = null
         if (!_isTracking.value) {
             releaseWakeLock()
             stopForeground(STOP_FOREGROUND_REMOVE)
@@ -406,6 +478,9 @@ class SleepTrackingService : Service() {
         }
         _isTracking.value = false
         _trackingStartMs.value = 0L
+        _armedAlarmId.value = null
+        _armedDurationMinutes.value = null
+        _scheduledWakeTimeMs.value = null
 
         serviceScope.launch {
             silentAudioPlayer.stop()
@@ -533,8 +608,13 @@ class SleepTrackingService : Service() {
     }
 
     override fun onDestroy() {
+        epochCollectorJob?.cancel()
+        epochCollectorJob = null
         _isTracking.value = false
         _trackingStartMs.value = 0L
+        _armedAlarmId.value = null
+        _armedDurationMinutes.value = null
+        _scheduledWakeTimeMs.value = null
         serviceScope.cancel()
         silentAudioPlayer.stop()
         releaseWakeLock()

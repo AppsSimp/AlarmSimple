@@ -1,8 +1,10 @@
 package com.appssimple.alarmsimple.ui.setup
 
 import android.content.Context
+import android.content.Intent
 import android.media.RingtoneManager
 import android.net.Uri
+import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.appssimple.alarmsimple.data.db.dao.AlarmDao
@@ -14,6 +16,7 @@ import com.appssimple.alarmsimple.domain.model.AlarmMode
 import com.appssimple.alarmsimple.domain.model.QuestType
 import com.appssimple.alarmsimple.quest.MathDifficulty
 import com.appssimple.alarmsimple.service.AlarmScheduler
+import com.appssimple.alarmsimple.service.SleepTrackingService
 import dagger.hilt.android.lifecycle.HiltViewModel
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -265,6 +268,21 @@ class AlarmSetupViewModel @Inject constructor(
 
                     // Армируем напоминание об анализе сна (ставится только если включено в настройках)
                     alarmScheduler.ensureSleepReminderScheduled()
+
+                    // Автозапуск анализа сна, если до точного будильника осталось менее 9 часов
+                    val now = System.currentTimeMillis()
+                    val diffMs = targetTimeMs - now
+                    if (diffMs in 1 until 9 * 3600_000L) {
+                        val trackingIntent = Intent(context, SleepTrackingService::class.java).apply {
+                            action = SleepTrackingService.ACTION_START_TRACKING
+                            putExtra(SleepTrackingService.EXTRA_ALARM_ID, finalId)
+                        }
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                            context.startForegroundService(trackingIntent)
+                        } else {
+                            context.startService(trackingIntent)
+                        }
+                    }
                 }
 
                 _uiState.update { it.copy(isSaving = false) }

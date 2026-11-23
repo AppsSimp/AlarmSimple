@@ -9,11 +9,11 @@ import kotlinx.coroutines.flow.asSharedFlow
 import javax.inject.Inject
 import javax.inject.Singleton
 
-/** Пауза, после которой считаем, что трекер просто не работал, и не выдумываем сон. */
-private const val MAX_BACKFILL_GAP_MS = 30 * 60_000L
+/** Пауза, после которой считаем, что трекер просто не работал, и не выдумываем сон (максимум 5 минут). */
+private const val MAX_BACKFILL_GAP_MS = 5 * 60_000L
 
-/** Сколько эпох максимум можно восстановить (2 часа). */
-private const val MAX_BACKFILL_EPOCHS = 240
+/** Сколько эпох максимум можно восстановить (5 минут = 10 эпох по 30 секунд). */
+private const val MAX_BACKFILL_EPOCHS = 10
 
 data class FusionEpochState(
     val timestampMs: Long,
@@ -95,6 +95,7 @@ class SensorFusion @Inject constructor(
     private var deepEpochsInCycle = 0
 
     fun start(sessionId: Long) {
+        fusionJob?.cancel()
         trackingStartTimeMs = System.currentTimeMillis()
         sleepOnsetTimeMs = null
         consecutiveQuietEpochs = 0
@@ -175,20 +176,25 @@ class SensorFusion @Inject constructor(
         audioAnalyzer.stop()
     }
 
+    @Synchronized
     private fun processCombinedEpoch(movement: EpochMovementResult) {
         val now = movement.timestampMs
+        if (lastEpochTimestampMs > 0L && now <= lastEpochTimestampMs) {
+            return
+        }
+
         val timeDeltaMs = if (lastEpochTimestampMs > 0L) now - lastEpochTimestampMs else 30_000L
 
-        // ЖЕЛЕЗОБЕТОННЫЙ ЗАЩИТНИК ОТ DOZE MODE (Wall-Clock Gap Backfill):
-        // Если операционная система спала или произошла пауза (> 45 сек),
-        // математически восстанавливаем пропущенные 30-секундные эпохи покоя по реальному времени.
-        // Ограничения: не больше 2 часов подряд и только для пауз до 3 часов — иначе это уже
-        // не «сон в Doze», а выключенный трекер, и придумывать часы сна нельзя.
+        // Wall-Clock Gap Backfill:
+        // Если операционная система спала или произошла короткая пауза (до 5 минут),
+        // восстанавливаем пропущенные 30-секундные эпохи покоя по реальному времени.
+        // Не более 5 минут (10 эпох), штампы времени не превышают now.
+        // Для пауз длиннее 5 минут не выдумываем сон, а просто отдаем одну реальную эпоху.
         if (lastEpochTimestampMs > 0L && timeDeltaMs in 45_000L..MAX_BACKFILL_GAP_MS) {
             val missingCount = ((timeDeltaMs - 15_000L) / 30_000L).toInt()
-            val safeCount = kotlin.math.min(missingCount, MAX_BACKFILL_EPOCHS)
+            val safeCount = minOf(missingCount, MAX_BACKFILL_EPOCHS)
             for (i in 1..safeCount) {
-                val synthTime = lastEpochTimestampMs + (i * 30_000L)
+                val synthTime = minOf(lastEpochTimestampMs + (i * 30_000L), now)
                 processSingleEpoch(
                     EpochMovementResult(
                         timestampMs = synthTime,

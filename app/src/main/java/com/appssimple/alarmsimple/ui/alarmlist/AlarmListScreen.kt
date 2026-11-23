@@ -38,6 +38,7 @@ import com.appssimple.alarmsimple.ui.components.ModernBadge
 import com.appssimple.alarmsimple.ui.components.ModernCard
 import com.appssimple.alarmsimple.ui.theme.BrandPrimary
 import com.appssimple.alarmsimple.ui.theme.BrandSecondary
+import com.appssimple.alarmsimple.ui.theme.BrandSecondaryLight
 import com.appssimple.alarmsimple.ui.theme.PrimaryGradient
 import com.appssimple.alarmsimple.ui.theme.SleepGradient
 import kotlinx.coroutines.launch
@@ -59,6 +60,24 @@ fun AlarmListScreen(
     val selectedIds by viewModel.selectedAlarmIds.collectAsState()
     val isSelectionMode = selectedIds.isNotEmpty()
     val testRingButtonsEnabled by viewModel.testRingButtonsEnabled.collectAsState(initial = false)
+
+    val isTracking by SleepTrackingService.isTracking.collectAsState()
+    val armedAlarmId by SleepTrackingService.armedAlarmId.collectAsState()
+    val armedDurationMinutes by SleepTrackingService.armedDurationMinutes.collectAsState()
+    val scheduledWakeTimeMs by SleepTrackingService.scheduledWakeTimeMs.collectAsState()
+
+    val armedDurationText = remember(isTracking, armedDurationMinutes, scheduledWakeTimeMs) {
+        if (isTracking && armedDurationMinutes != null && scheduledWakeTimeMs != null) {
+            val hours = armedDurationMinutes!! / 60
+            val mins = armedDurationMinutes!! % 60
+            val timeFormat = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(scheduledWakeTimeMs!!))
+            val durStr = buildString {
+                append("$hours ч")
+                if (mins > 0) append(" $mins м")
+            }
+            "Проснуться через $durStr · до $timeFormat"
+        } else null
+    }
 
     val coachMarksShown by viewModel.coachMarksShown.collectAsState(initial = true)
     var currentCoachStep by remember { mutableIntStateOf(0) } // 0: off, 1: Sleep card, 2: Help icon, 3: Add button
@@ -189,7 +208,11 @@ fun AlarmListScreen(
                                 context.startService(intent)
                             }
                             onOpenSleepTracking()
-                        }
+                        },
+                        armedDurationText = armedDurationText,
+                        onDisableArmedAlarm = if (isTracking && armedAlarmId != null) {
+                            { armedAlarmId?.let { viewModel.disarmDurationAlarm(it) } }
+                        } else null
                     )
 
                     Spacer(Modifier.weight(0.5f))
@@ -364,7 +387,11 @@ fun AlarmListScreen(
                                     context.startService(intent)
                                 }
                                 onOpenSleepTracking()
-                            }
+                            },
+                            armedDurationText = armedDurationText,
+                            onDisableArmedAlarm = if (isTracking && armedAlarmId != null) {
+                                { armedAlarmId?.let { viewModel.disarmDurationAlarm(it) } }
+                            } else null
                         )
                     }
 
@@ -411,6 +438,7 @@ fun AlarmListScreen(
                                 }
                             }
                         ) {
+                            val isThisAlarmArmed = isTracking && armedAlarmId == alarm.id
                             AlarmItemCard(
                                 alarm = alarm,
                                 isSelectionMode = isSelectionMode,
@@ -453,6 +481,11 @@ fun AlarmListScreen(
                                     } else {
                                         context.startService(intent)
                                     }
+                                },
+                                isArmedDuration = isThisAlarmArmed,
+                                armedDurationText = if (isThisAlarmArmed) armedDurationText else null,
+                                onDisableArmedAlarm = {
+                                    viewModel.disarmDurationAlarm(alarm.id)
                                 }
                             )
                         }
@@ -590,22 +623,26 @@ fun CoachMarksOverlay(
 }
 
 @Composable
-fun QuickSleepCard(onStartSleep: () -> Unit) {
+fun QuickSleepCard(
+    onStartSleep: () -> Unit,
+    armedDurationText: String? = null,
+    onDisableArmedAlarm: (() -> Unit)? = null
+) {
     val isTracking by SleepTrackingService.isTracking.collectAsState()
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
+            .clip(RoundedCornerShape(16.dp))
             .background(if (isTracking) BrandPrimary.copy(alpha = 0.25f) else Color.Transparent)
             .border(
                 width = 1.dp,
                 brush = if (isTracking) PrimaryGradient else SleepGradient,
-                shape = RoundedCornerShape(20.dp)
+                shape = RoundedCornerShape(16.dp)
             )
             .background(if (isTracking) Brush.horizontalGradient(listOf(Color(0xFF1E1B4B), Color(0xFF0F172A))) else SleepGradient)
             .clickable { onStartSleep() }
-            .padding(18.dp)
+            .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -617,43 +654,68 @@ fun QuickSleepCard(onStartSleep: () -> Unit) {
                     if (isTracking) {
                         Box(
                             modifier = Modifier
-                                .size(10.dp)
+                                .size(8.dp)
                                 .clip(CircleShape)
                                 .background(BrandSecondary)
                         )
-                        Spacer(Modifier.width(8.dp))
+                        Spacer(Modifier.width(6.dp))
                     }
                     Text(
                         text = if (isTracking) "Сон отслеживается сейчас" else "Идёте спать прямо сейчас?",
                         color = Color.White,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 17.sp
+                        fontSize = 15.sp
                     )
                 }
                 Spacer(Modifier.height(2.dp))
                 Text(
-                    text = if (isTracking) "Нажмите, чтобы открыть таймер и управление сном" else "Нажмите «Спать», чтобы начать трекинг фаз сна прямо сейчас",
-                    color = Color.White.copy(alpha = 0.85f),
-                    fontSize = 12.sp
+                    text = if (isTracking) {
+                        armedDurationText ?: "Нажмите, чтобы открыть таймер и управление сном"
+                    } else {
+                        "Нажмите «Спать», чтобы начать трекинг фаз сна прямо сейчас"
+                    },
+                    color = Color.White.copy(alpha = 0.9f),
+                    fontSize = 12.sp,
+                    fontWeight = if (armedDurationText != null) FontWeight.SemiBold else FontWeight.Normal
                 )
             }
-            Spacer(Modifier.width(12.dp))
-            Button(
-                onClick = onStartSleep,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isTracking) BrandSecondary else Color.White,
-                    contentColor = if (isTracking) Color.White else Color(0xFF0F172A)
-                ),
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp)
+            Spacer(Modifier.width(10.dp))
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                Icon(
-                    if (isTracking) Icons.Default.GraphicEq else Icons.Default.Bedtime,
-                    contentDescription = null,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(if (isTracking) "Экран сна" else "Спать", fontWeight = FontWeight.Bold)
+                if (isTracking && onDisableArmedAlarm != null) {
+                    OutlinedButton(
+                        onClick = onDisableArmedAlarm,
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFB7185)),
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFB7185).copy(alpha = 0.6f)),
+                        shape = RoundedCornerShape(10.dp),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                        modifier = Modifier.height(34.dp)
+                    ) {
+                        Icon(Icons.Default.AlarmOff, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Откл. аларм", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                Button(
+                    onClick = onStartSleep,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isTracking) BrandSecondary else Color.White,
+                        contentColor = if (isTracking) Color.White else Color(0xFF0F172A)
+                    ),
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                    modifier = Modifier.height(34.dp)
+                ) {
+                    Icon(
+                        if (isTracking) Icons.Default.GraphicEq else Icons.Default.Bedtime,
+                        contentDescription = null,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(if (isTracking) "Экран" else "Спать", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                }
             }
         }
     }
@@ -671,21 +733,35 @@ fun AlarmItemCard(
     onToggleActive: (Boolean) -> Unit,
     onStartSleepForAlarm: () -> Unit = {},
     showTestRingButton: Boolean = false,
-    onTriggerNow: () -> Unit = {}
+    onTriggerNow: () -> Unit = {},
+    isArmedDuration: Boolean = false,
+    armedDurationText: String? = null,
+    onDisableArmedAlarm: () -> Unit = {}
 ) {
     val isDuration = alarm.mode == AlarmMode.DURATION.name
+    val isArmed = if (isDuration) (alarm.isActive || isArmedDuration) else alarm.isActive
 
+    // 4) Armed duration alarm must look armed (white), not gray
     val borderColor = when {
         isSelected -> BrandPrimary
+        isDuration && isArmed -> Color.White.copy(alpha = 0.85f)
         alarm.isActive -> MaterialTheme.colorScheme.outlineVariant
         else -> MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f)
     }
 
     val backgroundColor = when {
         isSelected -> BrandPrimary.copy(alpha = 0.12f)
+        isDuration && isArmed -> Color(0xFF141C34)
         else -> MaterialTheme.colorScheme.surface
     }
 
+    val primaryTextColor = when {
+        isDuration && isArmed -> Color.White
+        alarm.isActive -> MaterialTheme.colorScheme.onSurface
+        else -> MaterialTheme.colorScheme.outline
+    }
+
+    // 5) Compact card: reduced vertical paddings
     ModernCard(
         modifier = Modifier
             .fillMaxWidth()
@@ -695,9 +771,10 @@ fun AlarmItemCard(
             ),
         backgroundColor = backgroundColor,
         borderColor = borderColor,
-        contentPadding = PaddingValues(16.dp)
+        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
+            // Верхняя строка: Время / Длительность слева, Кнопки / Переключатель справа
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
@@ -712,15 +789,14 @@ fun AlarmItemCard(
                 }
 
                 Column(modifier = Modifier.weight(1f)) {
-                    // Label if present
                     if (alarm.label.isNotEmpty()) {
                         Text(
                             text = alarm.label,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (alarm.isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
-                            fontWeight = FontWeight.Bold
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (isArmed) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1
                         )
-                        Spacer(Modifier.height(2.dp))
                     }
 
                     if (isDuration) {
@@ -728,14 +804,9 @@ fun AlarmItemCard(
                         val mins = (alarm.durationMinutes ?: 450) % 60
                         Text(
                             text = "$hours ч ${if (mins > 0) "$mins мин" else ""}",
-                            fontSize = 34.sp,
+                            fontSize = 28.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (alarm.isActive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline
-                        )
-                        Text(
-                            text = "Отсчет только после засыпания",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = BrandSecondary
+                            color = primaryTextColor
                         )
                     } else {
                         val timeStr = if (alarm.targetTimeMs != null) {
@@ -744,13 +815,85 @@ fun AlarmItemCard(
 
                         Text(
                             text = timeStr,
-                            fontSize = 38.sp,
+                            fontSize = 32.sp,
                             fontWeight = FontWeight.Bold,
-                            color = if (alarm.isActive) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outline,
-                            letterSpacing = (-1).sp
+                            color = primaryTextColor,
+                            letterSpacing = (-0.5).sp
                         )
                     }
+                }
 
+                // Элементы управления справа: на одной строке с временем
+                if (!isSelectionMode) {
+                    if (!isDuration) {
+                        Switch(
+                            checked = alarm.isActive,
+                            onCheckedChange = onToggleActive,
+                            colors = SwitchDefaults.colors(
+                                checkedThumbColor = Color.White,
+                                checkedTrackColor = BrandPrimary
+                            )
+                        )
+                    } else {
+                        if (isArmedDuration) {
+                            // 2) Компактная кнопка отключения активного будильника БЕЗ остановки анализа сна
+                            OutlinedButton(
+                                onClick = onDisableArmedAlarm,
+                                colors = ButtonDefaults.outlinedButtonColors(contentColor = Color(0xFFFB7185)),
+                                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFB7185).copy(alpha = 0.6f)),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Icon(Icons.Default.AlarmOff, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Отключить", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                            }
+                        } else {
+                            Button(
+                                onClick = onStartSleepForAlarm,
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = if (isArmed) BrandSecondary else MaterialTheme.colorScheme.surfaceVariant,
+                                    contentColor = if (isArmed) Color.White else MaterialTheme.colorScheme.onSurfaceVariant
+                                ),
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 4.dp),
+                                modifier = Modifier.height(34.dp)
+                            ) {
+                                Icon(Icons.Default.Bedtime, contentDescription = null, modifier = Modifier.size(15.dp))
+                                Spacer(Modifier.width(4.dp))
+                                Text("Спать", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(3.dp))
+
+            // 5) Вторая строка: режим / статус взведения / повтор / бейджи — НА ОДНОЙ СТРОКЕ
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (isDuration) {
+                    if (isArmedDuration && armedDurationText != null) {
+                        // 2) Показываем какой будильник по длительности взведен (например: "Проснуться через 7 ч 30 м · до 05:30")
+                        Text(
+                            text = armedDurationText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color.White,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    } else {
+                        Text(
+                            text = "Отсчет от засыпания",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = if (isArmed) BrandSecondaryLight else MaterialTheme.colorScheme.outline
+                        )
+                    }
+                } else {
                     val repeatDays = remember(alarm.repeatDays) {
                         runCatching {
                             val arr = org.json.JSONArray(alarm.repeatDays)
@@ -775,105 +918,48 @@ fun AlarmItemCard(
                             color = if (alarm.isActive) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline.copy(alpha = 0.7f),
                             fontWeight = FontWeight.Medium
                         )
-                        Spacer(Modifier.height(4.dp))
-                    }
-
-                    Spacer(Modifier.height(4.dp))
-
-                    // Badges
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        if (alarm.smartWakeEnabled) {
-                            ModernBadge(
-                                text = "Умное окно: ±${alarm.smartWakeWindowMinutes}м",
-                                color = if (alarm.isActive) BrandPrimary else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
-                            )
-                        }
-                        if (alarm.questType != "NONE") {
-                            val questLabel = when (alarm.questType) {
-                                "NFC" -> "NFC"
-                                "BARCODE" -> "Штрихкод"
-                                "MATH" -> "Математика"
-                                else -> alarm.questType
-                            }
-                            ModernBadge(
-                                text = "Задачи: $questLabel",
-                                color = if (alarm.isActive) BrandSecondary else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
-                            )
-                        }
+                    } else {
+                        Text(
+                            text = "Один раз",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.outline
+                        )
                     }
                 }
 
-                if (!isSelectionMode && !isDuration) {
-                    Switch(
-                        checked = alarm.isActive,
-                        onCheckedChange = onToggleActive,
-                        colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = BrandPrimary)
+                if (alarm.smartWakeEnabled) {
+                    ModernBadge(
+                        text = "±${alarm.smartWakeWindowMinutes}м",
+                        color = if (isArmed) BrandPrimary else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
+                    )
+                }
+                if (alarm.questType != "NONE") {
+                    val questLabel = when (alarm.questType) {
+                        "NFC" -> "NFC"
+                        "BARCODE" -> "Штрихкод"
+                        "MATH" -> "Математика"
+                        else -> alarm.questType
+                    }
+                    ModernBadge(
+                        text = questLabel,
+                        color = if (isArmed) BrandSecondary else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)
                     )
                 }
             }
 
-            // Кнопка прямого запуска сна для будильников по длительности
-            if (isDuration && !isSelectionMode) {
-                Spacer(Modifier.height(12.dp))
-                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                Spacer(Modifier.height(10.dp))
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = "Запустить сон с этим будильником:",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Button(
-                        onClick = onStartSleepForAlarm,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = BrandSecondary,
-                            contentColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 6.dp)
-                    ) {
-                        Icon(Icons.Default.Bedtime, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Спать", fontWeight = FontWeight.Bold, fontSize = 13.sp)
-                    }
-                }
-            }
-
-            // Кнопка разработчика / теста "Зазвонить сейчас"
+            // Кнопка разработчика / теста "Зазвонить сейчас" (одна компактная строка, если включена)
             if (showTestRingButton && !isSelectionMode) {
-                Spacer(Modifier.height(10.dp))
-                HorizontalDivider(color = Color(0xFFE11D48).copy(alpha = 0.3f))
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(3.dp))
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                    horizontalArrangement = Arrangement.End
                 ) {
-                    Text(
-                        text = "Режим разработчика:",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = Color(0xFFF43F5E),
-                        fontWeight = FontWeight.SemiBold
-                    )
-                    Button(
+                    TextButton(
                         onClick = onTriggerNow,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = Color(0xFFE11D48),
-                            contentColor = Color.White
-                        ),
-                        shape = RoundedCornerShape(10.dp),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 5.dp)
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.height(26.dp)
                     ) {
-                        Icon(Icons.Default.Alarm, contentDescription = null, modifier = Modifier.size(15.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Зазвонить сейчас", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                        Text("Тест: зазвонить", fontSize = 11.sp, color = Color(0xFFF43F5E), fontWeight = FontWeight.Bold)
                     }
                 }
             }
