@@ -154,7 +154,17 @@ class AlarmFiringService : Service() {
             startForeground(NOTIFICATION_ID, notification)
         }
 
-        // Прямой запуск активити поверх других окон / экрана блокировки
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+            if (!nm.canUseFullScreenIntent()) {
+                android.util.Log.w(
+                    "AlarmFiringService",
+                    "USE_FULL_SCREEN_INTENT is denied on Android 14+; full-screen UI may not appear from background"
+                )
+            }
+        }
+
+        // Прямой запуск активити поверх других окон / экрана блокировки (работает при SYSTEM_ALERT_WINDOW или из foreground)
         try {
             startActivity(fullScreenIntent)
         } catch (e: Exception) {
@@ -276,6 +286,9 @@ class AlarmFiringService : Service() {
         alarmScheduler.dismissSystemBackupAlarm("AlarmSimple (Предохранитель)")
         alarmScheduler.dismissSystemBackupAlarm("Страховка: AlarmSimple")
 
+        // Capture companion classic alarm ID before ACTION_STOP_TRACKING clears it
+        val companionClassicId = SleepTrackingService.companionClassicAlarmId.value
+
         // Tell SleepTrackingService to wrap up and compute final session stats
         if (SleepTrackingService.isTracking.value) {
             val stopTrackingIntent = Intent(this, SleepTrackingService::class.java).apply {
@@ -301,7 +314,7 @@ class AlarmFiringService : Service() {
                             // Single wakeup policy (Task 3):
                             // Cancel/deactivate the CLASSIC alarm of that session if it is still armed for a later time,
                             // so the user is not woken twice. Do not cancel an unrelated alarm of another day.
-                            handleCompanionClassicAlarmCancellation()
+                            handleCompanionClassicAlarmCancellation(companionClassicId)
                         } else {
                             val repeatDays = runCatching {
                                 val arr = org.json.JSONArray(alarm.repeatDays)
@@ -340,18 +353,13 @@ class AlarmFiringService : Service() {
         }
     }
 
-    private suspend fun handleCompanionClassicAlarmCancellation() {
+    private suspend fun handleCompanionClassicAlarmCancellation(companionId: Long?) {
+        // Only cancel a classic alarm that was explicitly paired with this sleep tracking session.
+        if (companionId == null || companionId <= 0) return
+
         val now = System.currentTimeMillis()
         val nowCal = java.util.Calendar.getInstance().apply { timeInMillis = now }
-
-        val companionId = SleepTrackingService.companionClassicAlarmId.value
-        val classicAlarm = if (companionId != null && companionId > 0) {
-            alarmDao.getAlarmById(companionId)
-        } else {
-            val activeAlarms = alarmDao.getActiveAlarmsList()
-            activeAlarms.filter { it.mode == AlarmMode.CLASSIC.name && it.targetTimeMs != null && it.targetTimeMs > now }
-                .minByOrNull { it.targetTimeMs!! }
-        }
+        val classicAlarm = alarmDao.getAlarmById(companionId)
 
         if (classicAlarm != null && classicAlarm.isActive && classicAlarm.targetTimeMs != null) {
             val targetMs = classicAlarm.targetTimeMs

@@ -1,6 +1,12 @@
 package com.appssimple.alarmsimple.ui
 
+import android.app.NotificationManager
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -20,11 +26,13 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Bedtime
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -60,9 +68,27 @@ class MainActivity : ComponentActivity() {
     @Inject
     lateinit var alarmScheduler: com.appssimple.alarmsimple.service.AlarmScheduler
 
+    private val missedAlarmsState = mutableStateOf<List<com.appssimple.alarmsimple.service.MissedAlarmInfo>>(emptyList())
+    private val showExactAlarmDialogState = mutableStateOf(false)
+    private val showFullScreenIntentDialogState = mutableStateOf(false)
+
     override fun onResume() {
         super.onResume()
         checkAndRedirectIfRinging()
+        checkAlarmPermissions()
+    }
+
+    private fun checkAlarmPermissions() {
+        if (!alarmScheduler.canScheduleExactAlarms()) {
+            showExactAlarmDialogState.value = true
+        } else {
+            showExactAlarmDialogState.value = false
+        }
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            showFullScreenIntentDialogState.value = !nm.canUseFullScreenIntent()
+        }
     }
 
     private fun checkAndRedirectIfRinging() {
@@ -120,11 +146,15 @@ class MainActivity : ComponentActivity() {
 
         // Самолечение: Android стирает AlarmManager-алармы при обновлении APK и принудительной
         // остановке приложения. При каждом холодном старте восстанавливаем будильники и цепочку
-        // напоминаний об анализе сна из БД.
+        // напоминаний об анализе сна из БД, а также проверяем пропущенные будильники.
         lifecycleScope.launch(Dispatchers.IO) {
             try {
                 alarmScheduler.rescheduleAllAlarms()
                 alarmScheduler.ensureSleepReminderScheduled()
+                val missed = alarmScheduler.consumeMissedAlarms()
+                if (missed.isNotEmpty()) {
+                    missedAlarmsState.value = missed
+                }
             } catch (ignored: Exception) {
             }
         }
@@ -139,6 +169,11 @@ class MainActivity : ComponentActivity() {
                         checkAndRedirectIfRinging()
                     }
                 }
+
+                val exactAlarmDeniedByScheduler by alarmScheduler.exactAlarmPermissionDenied.collectAsState()
+                val missedAlarms by remember { missedAlarmsState }
+                val showExactDialog by remember { showExactAlarmDialogState }
+                val showFsiDialog by remember { showFullScreenIntentDialogState }
 
                 var ready by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
                 var onboardingCompleted by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
@@ -172,6 +207,82 @@ class MainActivity : ComponentActivity() {
                         } else {
                             SplashContent()
                         }
+                    }
+
+                    if (missedAlarms.isNotEmpty()) {
+                        val timeFormat = remember { java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault()) }
+                        val summary = missedAlarms.joinToString("\n") { item ->
+                            val timeStr = timeFormat.format(java.util.Date(item.scheduledTimeMs))
+                            if (item.label.isNotBlank()) "• $timeStr — ${item.label}" else "• $timeStr"
+                        }
+                        AlertDialog(
+                            onDismissRequest = { missedAlarmsState.value = emptyList() },
+                            title = { Text("Пропущенный будильник") },
+                            text = {
+                                Text(
+                                    "Будильник не сработал вовремя (возможно, приложение было принудительно остановлено системой или телефон был выключен):\n\n$summary"
+                                )
+                            },
+                            confirmButton = {
+                                TextButton(onClick = { missedAlarmsState.value = emptyList() }) {
+                                    Text("Понятно")
+                                }
+                            }
+                        )
+                    } else if ((showExactDialog || exactAlarmDeniedByScheduler) && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                        AlertDialog(
+                            onDismissRequest = { showExactAlarmDialogState.value = false },
+                            title = { Text("Нет разрешения на точные будильники") },
+                            text = {
+                                Text("Без разрешения «Будильники и напоминания» система может отложить срабатывание будильника. Откройте настройки и разрешите точные будильники.")
+                            },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    showExactAlarmDialogState.value = false
+                                    runCatching {
+                                        startActivity(
+                                            Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                                data = Uri.parse("package:$packageName")
+                                            }
+                                        )
+                                    }
+                                }) {
+                                    Text("Настройки")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showExactAlarmDialogState.value = false }) {
+                                    Text("Позже")
+                                }
+                            }
+                        )
+                    } else if (showFsiDialog && Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                        AlertDialog(
+                            onDismissRequest = { showFullScreenIntentDialogState.value = false },
+                            title = { Text("Разрешите полноэкранный будильник") },
+                            text = {
+                                Text("На Android 14+ без этого разрешения экран будильника может не открыться поверх заблокированного экрана.")
+                            },
+                            confirmButton = {
+                                TextButton(onClick = {
+                                    showFullScreenIntentDialogState.value = false
+                                    runCatching {
+                                        startActivity(
+                                            Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT).apply {
+                                                data = Uri.parse("package:$packageName")
+                                            }
+                                        )
+                                    }
+                                }) {
+                                    Text("Настройки")
+                                }
+                            },
+                            dismissButton = {
+                                TextButton(onClick = { showFullScreenIntentDialogState.value = false }) {
+                                    Text("Позже")
+                                }
+                            }
+                        )
                     }
                 }
             }

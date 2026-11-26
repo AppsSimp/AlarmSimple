@@ -4,6 +4,7 @@ import android.app.AlarmManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import com.appssimple.alarmsimple.data.db.dao.AlarmDao
 import com.appssimple.alarmsimple.domain.model.AlarmMode
 import com.appssimple.alarmsimple.data.preferences.UserPreferences
@@ -11,9 +12,20 @@ import com.appssimple.alarmsimple.receiver.AlarmReceiver
 import com.appssimple.alarmsimple.ui.MainActivity
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.firstOrNull
+import org.json.JSONArray
+import org.json.JSONObject
 import javax.inject.Inject
 import javax.inject.Singleton
+
+data class MissedAlarmInfo(
+    val id: Long,
+    val label: String,
+    val scheduledTimeMs: Long
+)
 
 @Singleton
 class AlarmScheduler @Inject constructor(
@@ -22,6 +34,16 @@ class AlarmScheduler @Inject constructor(
     private val userPreferences: UserPreferences
 ) {
     private val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+    private val prefs by lazy {
+        context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    private val _exactAlarmPermissionDenied = MutableStateFlow(false)
+    val exactAlarmPermissionDenied: StateFlow<Boolean> = _exactAlarmPermissionDenied.asStateFlow()
+
+    fun canScheduleExactAlarms(): Boolean {
+        return Build.VERSION.SDK_INT < Build.VERSION_CODES.S || alarmManager.canScheduleExactAlarms()
+    }
 
     fun scheduleAlarm(triggerTimeMs: Long, alarmId: Long) {
         val showIntent = Intent(context, MainActivity::class.java).apply {
@@ -46,8 +68,32 @@ class AlarmScheduler @Inject constructor(
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerTimeMs, showPendingIntent)
-        alarmManager.setAlarmClock(alarmClockInfo, operationPendingIntent)
+        if (canScheduleExactAlarms()) {
+            try {
+                val alarmClockInfo = AlarmManager.AlarmClockInfo(triggerTimeMs, showPendingIntent)
+                alarmManager.setAlarmClock(alarmClockInfo, operationPendingIntent)
+                _exactAlarmPermissionDenied.value = false
+                return
+            } catch (e: SecurityException) {
+                e.printStackTrace()
+            }
+        }
+
+        // Exact alarm permission denied: surface to UI and schedule best-effort fallback
+        _exactAlarmPermissionDenied.value = true
+        scheduleInexactFallback(triggerTimeMs, operationPendingIntent)
+    }
+
+    private fun scheduleInexactFallback(triggerTimeMs: Long, operationPendingIntent: PendingIntent) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                alarmManager.setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, triggerTimeMs, operationPendingIntent)
+            } else {
+                alarmManager.set(AlarmManager.RTC_WAKEUP, triggerTimeMs, operationPendingIntent)
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     /**
@@ -106,6 +152,9 @@ class AlarmScheduler @Inject constructor(
         const val FAILSAFE_ALARM_ID = 999999L
         const val ACTION_FIRE_FAILSAFE = "com.appssimple.alarmsimple.ACTION_FIRE_FAILSAFE"
         const val BACKUP_ALARM_LABEL = "AlarmSimple (Предохранитель)"
+        private const val PREFS_NAME = "alarm_scheduler_prefs"
+        private const val KEY_MISSED_ALARMS = "missed_alarms_json"
+        private const val MISSED_ALARM_GRACE_MS = 60_000L
     }
 
     /**
@@ -225,6 +274,7 @@ class AlarmScheduler @Inject constructor(
     }
 
     private fun scheduleInternalFailsafe(triggerTimeMs: Long) {
+        if (!canScheduleExactAlarms()) return
         try {
             val receiverIntent = Intent(context, AlarmReceiver::class.java).apply {
                 action = ACTION_FIRE_FAILSAFE
@@ -309,10 +359,14 @@ class AlarmScheduler @Inject constructor(
                 intent,
                 PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
             )
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-                alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, target, pendingIntent)
+            if (canScheduleExactAlarms()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, target, pendingIntent)
+                } else {
+                    alarmManager.setExact(AlarmManager.RTC_WAKEUP, target, pendingIntent)
+                }
             } else {
-                alarmManager.setExact(AlarmManager.RTC_WAKEUP, target, pendingIntent)
+                scheduleInexactFallback(target, pendingIntent)
             }
         } catch (e: Exception) {
             e.printStackTrace()
@@ -339,8 +393,9 @@ class AlarmScheduler @Inject constructor(
     /**
      * Полное восстановление всех активных будильников из БД.
      * Протухшие повторяющиеся будильники пересчитываются на следующее срабатывание,
-     * разовые в прошлом деактивируются. Вызывается после загрузки телефона, обновления
-     * APK (Android стирает все AlarmManager-алармы) и при открытии приложения.
+     * разовые в прошлом деактивируются и фиксируются как пропущенные.
+     * Вызывается после загрузки телефона, обновления APK, смены времени/часового пояса
+     * и при открытии приложения.
      */
     suspend fun rescheduleAllAlarms() {
         try {
@@ -350,26 +405,38 @@ class AlarmScheduler @Inject constructor(
             for (alarm in activeAlarms) {
                 if (alarm.mode == AlarmMode.CLASSIC.name && alarm.targetTimeMs != null) {
                     val repeatDays = runCatching {
-                        val arr = org.json.JSONArray(alarm.repeatDays)
+                        val arr = JSONArray(alarm.repeatDays)
                         (0 until arr.length()).map { arr.getInt(it) }.toSet()
                     }.getOrDefault(emptySet())
 
                     val target = if (alarm.targetTimeMs > now) {
                         alarm.targetTimeMs
-                    } else if (repeatDays.isNotEmpty()) {
-                        val cal = java.util.Calendar.getInstance().apply { timeInMillis = alarm.targetTimeMs }
-                        val next = calculateNextTriggerTime(
-                            hour = cal.get(java.util.Calendar.HOUR_OF_DAY),
-                            minute = cal.get(java.util.Calendar.MINUTE),
-                            repeatDays = repeatDays,
-                            repeatIntervalWeeks = alarm.repeatIntervalWeeks
-                        )
-                        alarmDao.updateAlarm(alarm.copy(targetTimeMs = next, isActive = true))
-                        next
                     } else {
-                        // Разовый будильник в прошлом — выключаем
-                        alarmDao.setAlarmActive(alarm.id, false)
-                        null
+                        if (now - alarm.targetTimeMs > MISSED_ALARM_GRACE_MS) {
+                            recordMissedAlarm(
+                                MissedAlarmInfo(
+                                    id = alarm.id,
+                                    label = alarm.label,
+                                    scheduledTimeMs = alarm.targetTimeMs
+                                )
+                            )
+                        }
+                        if (repeatDays.isNotEmpty()) {
+                            val cal = java.util.Calendar.getInstance().apply { timeInMillis = alarm.targetTimeMs }
+                            val next = calculateNextTriggerTime(
+                                hour = cal.get(java.util.Calendar.HOUR_OF_DAY),
+                                minute = cal.get(java.util.Calendar.MINUTE),
+                                repeatDays = repeatDays,
+                                repeatIntervalWeeks = alarm.repeatIntervalWeeks,
+                                fromTimeMs = now
+                            )
+                            alarmDao.updateAlarm(alarm.copy(targetTimeMs = next, isActive = true))
+                            next
+                        } else {
+                            // Разовый будильник в прошлом — выключаем
+                            alarmDao.setAlarmActive(alarm.id, false)
+                            null
+                        }
                     }
 
                     if (target != null) {
@@ -379,6 +446,15 @@ class AlarmScheduler @Inject constructor(
                     if (alarm.targetTimeMs > now) {
                         scheduleAlarm(alarm.targetTimeMs, alarm.id)
                     } else {
+                        if (now - alarm.targetTimeMs > MISSED_ALARM_GRACE_MS) {
+                            recordMissedAlarm(
+                                MissedAlarmInfo(
+                                    id = alarm.id,
+                                    label = alarm.label,
+                                    scheduledTimeMs = alarm.targetTimeMs
+                                )
+                            )
+                        }
                         // Разовый будильник длительности в прошлом — выключаем
                         alarmDao.setAlarmActive(alarm.id, false)
                         alarmDao.updateAlarmTargetTime(alarm.id, null)
@@ -388,6 +464,53 @@ class AlarmScheduler @Inject constructor(
         } catch (e: Exception) {
             e.printStackTrace()
         }
+    }
+
+    @Synchronized
+    private fun recordMissedAlarm(info: MissedAlarmInfo) {
+        try {
+            val existing = readMissedAlarms().toMutableList()
+            if (existing.none { it.id == info.id && it.scheduledTimeMs == info.scheduledTimeMs }) {
+                existing.add(info)
+                val arr = JSONArray()
+                existing.forEach { item ->
+                    arr.put(
+                        JSONObject().apply {
+                            put("id", item.id)
+                            put("label", item.label)
+                            put("scheduledTimeMs", item.scheduledTimeMs)
+                        }
+                    )
+                }
+                prefs.edit().putString(KEY_MISSED_ALARMS, arr.toString()).apply()
+            }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
+    }
+
+    @Synchronized
+    fun consumeMissedAlarms(): List<MissedAlarmInfo> {
+        val list = readMissedAlarms()
+        if (list.isNotEmpty()) {
+            prefs.edit().remove(KEY_MISSED_ALARMS).apply()
+        }
+        return list
+    }
+
+    private fun readMissedAlarms(): List<MissedAlarmInfo> {
+        val raw = prefs.getString(KEY_MISSED_ALARMS, null) ?: return emptyList()
+        return runCatching {
+            val arr = JSONArray(raw)
+            (0 until arr.length()).map { i ->
+                val obj = arr.getJSONObject(i)
+                MissedAlarmInfo(
+                    id = obj.getLong("id"),
+                    label = obj.optString("label", ""),
+                    scheduledTimeMs = obj.getLong("scheduledTimeMs")
+                )
+            }
+        }.getOrDefault(emptyList())
     }
 
     /**

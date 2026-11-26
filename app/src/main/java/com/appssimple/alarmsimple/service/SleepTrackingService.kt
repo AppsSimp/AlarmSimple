@@ -233,9 +233,12 @@ class SleepTrackingService : Service() {
     private suspend fun finishStaleSession(lastEpochMs: Long?) {
         val durationAlarmIdToCancel = if (isDurationMode && targetAlarmId > 0) targetAlarmId else _armedAlarmId.value
         if (durationAlarmIdToCancel != null && durationAlarmIdToCancel > 0) {
-            alarmScheduler.cancelAlarm(durationAlarmIdToCancel)
-            alarmDao.updateAlarmTargetTime(durationAlarmIdToCancel, null)
-            alarmDao.setAlarmActive(durationAlarmIdToCancel, false)
+            val alarm = alarmDao.getAlarmById(durationAlarmIdToCancel)
+            if (alarm?.mode == AlarmMode.DURATION.name) {
+                alarmScheduler.cancelAlarm(durationAlarmIdToCancel)
+                alarmDao.updateAlarmTargetTime(durationAlarmIdToCancel, null)
+                alarmDao.setAlarmActive(durationAlarmIdToCancel, false)
+            }
         }
         epochCollectorJob?.cancel()
         epochCollectorJob = null
@@ -528,23 +531,24 @@ class SleepTrackingService : Service() {
     }
 
     fun disarmDurationAlarm() {
-        val alarmIdToDisarm = targetAlarmId.takeIf { it > 0 } ?: _armedAlarmId.value ?: NO_ALARM_ID
-        if (alarmIdToDisarm > 0) {
-            alarmScheduler.cancelAlarm(alarmIdToDisarm)
-        }
-        targetAlarmId = NO_ALARM_ID
-        isDurationMode = false
-        scheduledAlarmTimeMs = 0L
-        companionClassicAlarmId = null
-        _companionClassicAlarmId.value = null
-        _armedAlarmId.value = null
-        _armedDurationMinutes.value = null
-        _scheduledWakeTimeMs.value = null
+        val alarmIdToDisarm = if (isDurationMode && targetAlarmId > 0) targetAlarmId else _armedAlarmId.value
+        if (alarmIdToDisarm != null && alarmIdToDisarm > 0) {
+            targetAlarmId = NO_ALARM_ID
+            isDurationMode = false
+            scheduledAlarmTimeMs = 0L
+            companionClassicAlarmId = null
+            _companionClassicAlarmId.value = null
+            _armedAlarmId.value = null
+            _armedDurationMinutes.value = null
+            _scheduledWakeTimeMs.value = null
 
-        if (alarmIdToDisarm > 0) {
             serviceScope.launch {
-                alarmDao.updateAlarmTargetTime(alarmIdToDisarm, null)
-                alarmDao.setAlarmActive(alarmIdToDisarm, false)
+                val alarm = alarmDao.getAlarmById(alarmIdToDisarm)
+                if (alarm?.mode == AlarmMode.DURATION.name) {
+                    alarmScheduler.cancelAlarm(alarmIdToDisarm)
+                    alarmDao.updateAlarmTargetTime(alarmIdToDisarm, null)
+                    alarmDao.setAlarmActive(alarmIdToDisarm, false)
+                }
             }
         }
     }
@@ -554,11 +558,18 @@ class SleepTrackingService : Service() {
         epochCollectorJob = null
 
         val durationAlarmIdToCancel = if (isDurationMode && targetAlarmId > 0) targetAlarmId else _armedAlarmId.value
-        if (durationAlarmIdToCancel != null && durationAlarmIdToCancel > 0) {
-            alarmScheduler.cancelAlarm(durationAlarmIdToCancel)
-        }
 
         if (!_isTracking.value) {
+            if (durationAlarmIdToCancel != null && durationAlarmIdToCancel > 0) {
+                serviceScope.launch {
+                    val alarm = alarmDao.getAlarmById(durationAlarmIdToCancel)
+                    if (alarm?.mode == AlarmMode.DURATION.name) {
+                        alarmScheduler.cancelAlarm(durationAlarmIdToCancel)
+                        alarmDao.updateAlarmTargetTime(durationAlarmIdToCancel, null)
+                        alarmDao.setAlarmActive(durationAlarmIdToCancel, false)
+                    }
+                }
+            }
             releaseWakeLock()
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
@@ -574,8 +585,12 @@ class SleepTrackingService : Service() {
 
         serviceScope.launch {
             if (durationAlarmIdToCancel != null && durationAlarmIdToCancel > 0) {
-                alarmDao.updateAlarmTargetTime(durationAlarmIdToCancel, null)
-                alarmDao.setAlarmActive(durationAlarmIdToCancel, false)
+                val alarm = alarmDao.getAlarmById(durationAlarmIdToCancel)
+                if (alarm?.mode == AlarmMode.DURATION.name) {
+                    alarmScheduler.cancelAlarm(durationAlarmIdToCancel)
+                    alarmDao.updateAlarmTargetTime(durationAlarmIdToCancel, null)
+                    alarmDao.setAlarmActive(durationAlarmIdToCancel, false)
+                }
             }
             silentAudioPlayer.stop()
             sensorFusion.stop()
@@ -704,10 +719,9 @@ class SleepTrackingService : Service() {
     override fun onDestroy() {
         epochCollectorJob?.cancel()
         epochCollectorJob = null
-        val durationAlarmIdToCancel = if (isDurationMode && targetAlarmId > 0) targetAlarmId else _armedAlarmId.value
-        if (durationAlarmIdToCancel != null && durationAlarmIdToCancel > 0) {
-            alarmScheduler.cancelAlarm(durationAlarmIdToCancel)
-        }
+        // Do NOT cancel the armed AlarmManager alarm here: if the OS kills the service
+        // in the background, the scheduled alarm must survive and still ring on time.
+        // Explicit user stop/disarm already cancels it in stopTracking()/disarmDurationAlarm().
         _isTracking.value = false
         _trackingStartMs.value = 0L
         _armedAlarmId.value = null

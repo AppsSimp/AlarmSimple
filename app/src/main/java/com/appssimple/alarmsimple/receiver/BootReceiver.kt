@@ -22,44 +22,52 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         // MY_PACKAGE_REPLACED критичен: Android стирает ВСЕ AlarmManager-алармы при
         // обновлении APK (в т.ч. через adb install -r), а BOOT_COMPLETED при этом НЕ приходит.
-        if (intent.action == Intent.ACTION_BOOT_COMPLETED ||
-            intent.action == Intent.ACTION_MY_PACKAGE_REPLACED
-        ) {
+        // TIME_CHANGED / TIMEZONE_CHANGED требуют пересчёта RTC-будильников.
+        val action = intent.action
+        val isBootOrReplace = action == Intent.ACTION_BOOT_COMPLETED ||
+            action == Intent.ACTION_LOCKED_BOOT_COMPLETED ||
+            action == Intent.ACTION_MY_PACKAGE_REPLACED
+        val isTimeChange = action == Intent.ACTION_TIME_CHANGED ||
+            action == Intent.ACTION_TIMEZONE_CHANGED
+
+        if (isBootOrReplace || isTimeChange) {
             val pendingResult = goAsync()
             CoroutineScope(Dispatchers.IO).launch {
                 try {
-                    // 1. Сохранение незавершённой сессии сна при внезапной перезагрузке телефона
-                    val latestSession = sleepSessionDao.getLatestSession()
-                    if (latestSession != null && latestSession.wakeUpMs == null) {
-                        // Сессия была оборвана (например, ночной перезагрузкой ОС)
-                        val lastEpoch = sleepEpochDao.getLatestEpochForSession(latestSession.id)
-                        val nowMs = System.currentTimeMillis()
-                        // Никаких «+30 минут от старта»: без эпох время пробуждения неизвестно,
-                        // а выдуманное значение даёт фантомные ночи в будущем.
-                        val inferredWakeUpMs = minOf(lastEpoch?.timestampMs ?: nowMs, nowMs)
-                        val onset = latestSession.sleepOnsetMs ?: latestSession.trackingStartMs
-                        val duration = inferredWakeUpMs - onset
+                    // 1. Сохранение незавершённой сессии сна при внезапной перезагрузке/обновлении
+                    if (isBootOrReplace) {
+                        val latestSession = sleepSessionDao.getLatestSession()
+                        if (latestSession != null && latestSession.wakeUpMs == null) {
+                            // Сессия была оборвана (например, ночной перезагрузкой ОС)
+                            val lastEpoch = sleepEpochDao.getLatestEpochForSession(latestSession.id)
+                            val nowMs = System.currentTimeMillis()
+                            // Никаких «+30 минут от старта»: без эпох время пробуждения неизвестно,
+                            // а выдуманное значение даёт фантомные ночи в будущем.
+                            val inferredWakeUpMs = minOf(lastEpoch?.timestampMs ?: nowMs, nowMs)
+                            val onset = latestSession.sleepOnsetMs ?: latestSession.trackingStartMs
+                            val duration = inferredWakeUpMs - onset
 
-                        // Сохраняем сессию только если реально наспано 10 минут..14 часов.
-                        // AWAKE-эпохи сном не считаются: сессия из одних пробуждений — мусор.
-                        val epochStats = sleepEpochDao.getEpochStatsForSession(latestSession.id)
-                        val stats = epochStats
-                        if (stats == null || stats.totalEpochs <= 0 || lastEpoch == null) {
-                            // Датчики не записали ни одной эпохи — сохранять нечего
-                            sleepEpochDao.deleteEpochsForSession(latestSession.id)
-                            sleepSessionDao.deleteSession(latestSession)
-                        } else {
-                            val realSleepMs = (stats.totalEpochs - stats.awakeEpochs) * 30_000L
-                            if (realSleepMs in 600_000L..14 * 3600_000L && duration > 0) {
-                                sleepSessionDao.updateSession(
-                                    latestSession.copy(
-                                        wakeUpMs = inferredWakeUpMs,
-                                        sleepOnsetMs = onset
-                                    )
-                                )
-                            } else {
+                            // Сохраняем сессию только если реально наспано 10 минут..14 часов.
+                            // AWAKE-эпохи сном не считаются: сессия из одних пробуждений — мусор.
+                            val epochStats = sleepEpochDao.getEpochStatsForSession(latestSession.id)
+                            val stats = epochStats
+                            if (stats == null || stats.totalEpochs <= 0 || lastEpoch == null) {
+                                // Датчики не записали ни одной эпохи — сохранять нечего
                                 sleepEpochDao.deleteEpochsForSession(latestSession.id)
                                 sleepSessionDao.deleteSession(latestSession)
+                            } else {
+                                val realSleepMs = (stats.totalEpochs - stats.awakeEpochs) * 30_000L
+                                if (realSleepMs in 600_000L..14 * 3600_000L && duration > 0) {
+                                    sleepSessionDao.updateSession(
+                                        latestSession.copy(
+                                            wakeUpMs = inferredWakeUpMs,
+                                            sleepOnsetMs = onset
+                                        )
+                                    )
+                                } else {
+                                    sleepEpochDao.deleteEpochsForSession(latestSession.id)
+                                    sleepSessionDao.deleteSession(latestSession)
+                                }
                             }
                         }
                     }
@@ -69,6 +77,8 @@ class BootReceiver : BroadcastReceiver() {
 
                     // 3. Запуск цепочки напоминаний об анализе сна
                     alarmScheduler.ensureSleepReminderScheduled()
+                } catch (e: Exception) {
+                    e.printStackTrace()
                 } finally {
                     pendingResult.finish()
                 }
