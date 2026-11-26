@@ -64,6 +64,9 @@ import com.google.mlkit.vision.common.InputImage
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 import javax.inject.Inject
 
@@ -111,6 +114,8 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
         nfcAdapter = NfcAdapter.getDefaultAdapter(this)
 
         val alarmId = intent.getLongExtra(AlarmFiringService.EXTRA_ALARM_ID, -1L)
+        val companionClassicAlarmId = intent.getLongExtra(AlarmFiringService.EXTRA_COMPANION_CLASSIC_ALARM_ID, -1L)
+        val companionClassicTimeMs = intent.getLongExtra(AlarmFiringService.EXTRA_COMPANION_CLASSIC_ALARM_TIME_MS, -1L)
 
         ContextCompat.registerReceiver(
             this,
@@ -125,6 +130,9 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                 var currentAlarm by remember { mutableStateOf<com.appssimple.alarmsimple.data.db.entity.AlarmEntity?>(null) }
                 val isFakePaymentEnabled by userPreferences.fakePaymentEnabled.collectAsState(initial = true)
                 var showPaymentOverlay by remember { mutableStateOf(false) }
+                var showCompanionClassicPrompt by remember {
+                    mutableStateOf(companionClassicAlarmId > 0 && companionClassicTimeMs > 0)
+                }
 
                 LaunchedEffect(alarmId) {
                     if (alarmId != -1L) {
@@ -178,6 +186,18 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
                     questType = questTypeState.value,
                     isQuestActive = isQuestActiveState.value,
                     expectedBarcode = expectedBarcode,
+                    companionClassicTimeMs = if (showCompanionClassicPrompt) companionClassicTimeMs else null,
+                    onDisableCompanionClassic = {
+                        showCompanionClassicPrompt = false
+                        val cancelIntent = Intent(this@AlarmRingingActivity, AlarmFiringService::class.java).apply {
+                            action = AlarmFiringService.ACTION_CANCEL_COMPANION_CLASSIC
+                            putExtra(AlarmFiringService.EXTRA_COMPANION_CLASSIC_ALARM_ID, companionClassicAlarmId)
+                        }
+                        startService(cancelIntent)
+                    },
+                    onKeepCompanionClassic = {
+                        showCompanionClassicPrompt = false
+                    },
                     onStartQuestNow = {
                         isQuestActiveState.value = true
                     },
@@ -297,6 +317,12 @@ class AlarmRingingActivity : ComponentActivity(), NfcAdapter.ReaderCallback {
             val reopenIntent = Intent(this, AlarmRingingActivity::class.java).apply {
                 flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
                 putExtra(AlarmFiringService.EXTRA_ALARM_ID, intent.getLongExtra(AlarmFiringService.EXTRA_ALARM_ID, -1L))
+                val compId = intent.getLongExtra(AlarmFiringService.EXTRA_COMPANION_CLASSIC_ALARM_ID, -1L)
+                val compTime = intent.getLongExtra(AlarmFiringService.EXTRA_COMPANION_CLASSIC_ALARM_TIME_MS, -1L)
+                if (compId > 0 && compTime > 0) {
+                    putExtra(AlarmFiringService.EXTRA_COMPANION_CLASSIC_ALARM_ID, compId)
+                    putExtra(AlarmFiringService.EXTRA_COMPANION_CLASSIC_ALARM_TIME_MS, compTime)
+                }
             }
             startActivity(reopenIntent)
         }
@@ -366,6 +392,9 @@ fun AlarmRingingScreenContent(
     questType: QuestType,
     isQuestActive: Boolean,
     expectedBarcode: String?,
+    companionClassicTimeMs: Long?,
+    onDisableCompanionClassic: () -> Unit,
+    onKeepCompanionClassic: () -> Unit,
     onStartQuestNow: () -> Unit,
     onGive5Minutes: () -> Unit,
     onDismiss: () -> Unit,
@@ -418,6 +447,49 @@ fun AlarmRingingScreenContent(
                         text = stringResource(R.string.channel_alarm_name),
                         style = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.Bold)
                     )
+                }
+            }
+
+            // Non-blocking prompt to cancel/keep companion CLASSIC alarm scheduled for later today
+            if (companionClassicTimeMs != null) {
+                val timeStr = remember(companionClassicTimeMs) {
+                    SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(companionClassicTimeMs))
+                }
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Отключить будильник на $timeStr сегодня?",
+                            style = MaterialTheme.typography.titleMedium,
+                            textAlign = TextAlign.Center
+                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = onKeepCompanionClassic,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Оставить")
+                            }
+                            Button(
+                                onClick = onDisableCompanionClassic,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Text("Отключить")
+                            }
+                        }
+                    }
                 }
             }
 

@@ -58,9 +58,12 @@ class AlarmFiringService : Service() {
         const val EXTRA_ALARM_ID = "EXTRA_ALARM_ID"
         const val EXTRA_IS_FAILSAFE = "EXTRA_IS_FAILSAFE"
         const val EXTRA_EARLY_WAKE = "EXTRA_EARLY_WAKE"
+        const val EXTRA_COMPANION_CLASSIC_ALARM_ID = "EXTRA_COMPANION_CLASSIC_ALARM_ID"
+        const val EXTRA_COMPANION_CLASSIC_ALARM_TIME_MS = "EXTRA_COMPANION_CLASSIC_ALARM_TIME_MS"
         const val ACTION_GIVE_5_MINUTES = "com.appssimple.alarmsimple.ACTION_GIVE_5_MINUTES"
         const val ACTION_DISMISS = "com.appssimple.alarmsimple.ACTION_DISMISS"
         const val ACTION_SNOOZE = "com.appssimple.alarmsimple.ACTION_SNOOZE"
+        const val ACTION_CANCEL_COMPANION_CLASSIC = "com.appssimple.alarmsimple.ACTION_CANCEL_COMPANION_CLASSIC"
 
         private val _isRinging = kotlinx.coroutines.flow.MutableStateFlow(false)
         val isRinging: kotlinx.coroutines.flow.StateFlow<Boolean> = _isRinging
@@ -86,6 +89,14 @@ class AlarmFiringService : Service() {
             ACTION_GIVE_5_MINUTES -> handleGive5Minutes()
             ACTION_DISMISS -> dismissAlarm()
             ACTION_SNOOZE -> handleSnooze()
+            ACTION_CANCEL_COMPANION_CLASSIC -> {
+                val companionId = intent.getLongExtra(EXTRA_COMPANION_CLASSIC_ALARM_ID, -1L)
+                if (companionId > 0) {
+                    serviceScope.launch(Dispatchers.IO + NonCancellable) {
+                        handleCompanionClassicAlarmCancellation(companionId)
+                    }
+                }
+            }
             else -> {
                 if (currentAlarmId > 0 || isFailsafe) {
                     startAlarmPlayback(currentAlarmId)
@@ -101,10 +112,27 @@ class AlarmFiringService : Service() {
     private fun startAlarmPlayback(alarmId: Long) {
         _isRinging.value = true
         _ringingAlarmId.value = alarmId
-        startForegroundWithFullScreenIntent(alarmId)
 
         serviceScope.launch {
             val alarm = alarmDao.getAlarmById(alarmId)
+            var companionId = -1L
+            var companionTimeMs = -1L
+
+            if (alarm?.mode == AlarmMode.DURATION.name) {
+                val candidateId = SleepTrackingService.companionClassicAlarmId.value
+                if (candidateId != null && candidateId > 0) {
+                    val classicAlarm = alarmDao.getAlarmById(candidateId)
+                    val now = System.currentTimeMillis()
+                    val targetMs = classicAlarm?.targetTimeMs
+                    if (classicAlarm != null && classicAlarm.isActive && targetMs != null && targetMs > now) {
+                        companionId = classicAlarm.id
+                        companionTimeMs = targetMs
+                    }
+                }
+            }
+
+            startForegroundWithFullScreenIntent(alarmId, companionId, companionTimeMs)
+
             isVolumeLockEnabled = alarm?.volumeLockEnabled ?: false
             isSirenEnabled = alarm?.sirenEnabled ?: false
 
@@ -120,13 +148,21 @@ class AlarmFiringService : Service() {
         }
     }
 
-    private fun startForegroundWithFullScreenIntent(alarmId: Long) {
+    private fun startForegroundWithFullScreenIntent(
+        alarmId: Long,
+        companionClassicId: Long = -1L,
+        companionClassicTimeMs: Long = -1L
+    ) {
         val fullScreenIntent = Intent(this, AlarmRingingActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or
                     Intent.FLAG_ACTIVITY_CLEAR_TOP or
                     Intent.FLAG_ACTIVITY_SINGLE_TOP or
                     Intent.FLAG_ACTIVITY_REORDER_TO_FRONT
             putExtra(EXTRA_ALARM_ID, alarmId)
+            if (companionClassicId > 0 && companionClassicTimeMs > 0) {
+                putExtra(EXTRA_COMPANION_CLASSIC_ALARM_ID, companionClassicId)
+                putExtra(EXTRA_COMPANION_CLASSIC_ALARM_TIME_MS, companionClassicTimeMs)
+            }
         }
         val fullScreenPendingIntent = PendingIntent.getActivity(
             this,
@@ -286,9 +322,6 @@ class AlarmFiringService : Service() {
         alarmScheduler.dismissSystemBackupAlarm("AlarmSimple (Предохранитель)")
         alarmScheduler.dismissSystemBackupAlarm("Страховка: AlarmSimple")
 
-        // Capture companion classic alarm ID before ACTION_STOP_TRACKING clears it
-        val companionClassicId = SleepTrackingService.companionClassicAlarmId.value
-
         // Tell SleepTrackingService to wrap up and compute final session stats
         if (SleepTrackingService.isTracking.value) {
             val stopTrackingIntent = Intent(this, SleepTrackingService::class.java).apply {
@@ -310,11 +343,6 @@ class AlarmFiringService : Service() {
                             alarmScheduler.cancelAlarm(alarm.id)
                             alarmDao.updateAlarm(alarm.copy(isActive = false, targetTimeMs = null))
                             alarmDao.setAlarmActive(alarm.id, false)
-
-                            // Single wakeup policy (Task 3):
-                            // Cancel/deactivate the CLASSIC alarm of that session if it is still armed for a later time,
-                            // so the user is not woken twice. Do not cancel an unrelated alarm of another day.
-                            handleCompanionClassicAlarmCancellation(companionClassicId)
                         } else {
                             val repeatDays = runCatching {
                                 val arr = org.json.JSONArray(alarm.repeatDays)
@@ -358,39 +386,32 @@ class AlarmFiringService : Service() {
         if (companionId == null || companionId <= 0) return
 
         val now = System.currentTimeMillis()
-        val nowCal = java.util.Calendar.getInstance().apply { timeInMillis = now }
         val classicAlarm = alarmDao.getAlarmById(companionId)
 
         if (classicAlarm != null && classicAlarm.isActive && classicAlarm.targetTimeMs != null) {
             val targetMs = classicAlarm.targetTimeMs
             if (targetMs > now) {
                 val classicCal = java.util.Calendar.getInstance().apply { timeInMillis = targetMs }
-                val isSameDay = classicCal.get(java.util.Calendar.YEAR) == nowCal.get(java.util.Calendar.YEAR) &&
-                        classicCal.get(java.util.Calendar.DAY_OF_YEAR) == nowCal.get(java.util.Calendar.DAY_OF_YEAR)
-                val isWithinSessionWindow = isSameDay || (targetMs - now in 1..(18 * 3600_000L))
+                alarmScheduler.cancelAlarm(classicAlarm.id)
 
-                if (isWithinSessionWindow) {
-                    alarmScheduler.cancelAlarm(classicAlarm.id)
+                val repeatDays = runCatching {
+                    val arr = org.json.JSONArray(classicAlarm.repeatDays)
+                    (0 until arr.length()).map { arr.getInt(it) }.toSet()
+                }.getOrDefault(emptySet())
 
-                    val repeatDays = runCatching {
-                        val arr = org.json.JSONArray(classicAlarm.repeatDays)
-                        (0 until arr.length()).map { arr.getInt(it) }.toSet()
-                    }.getOrDefault(emptySet())
-
-                    if (repeatDays.isNotEmpty()) {
-                        val nextTrigger = alarmScheduler.calculateNextTriggerTime(
-                            hour = classicCal.get(java.util.Calendar.HOUR_OF_DAY),
-                            minute = classicCal.get(java.util.Calendar.MINUTE),
-                            repeatDays = repeatDays,
-                            repeatIntervalWeeks = classicAlarm.repeatIntervalWeeks,
-                            fromTimeMs = targetMs
-                        )
-                        alarmDao.updateAlarm(classicAlarm.copy(targetTimeMs = nextTrigger, isActive = true))
-                        alarmScheduler.scheduleAlarm(nextTrigger, classicAlarm.id)
-                    } else {
-                        alarmDao.updateAlarm(classicAlarm.copy(isActive = false))
-                        alarmDao.setAlarmActive(classicAlarm.id, false)
-                    }
+                if (repeatDays.isNotEmpty()) {
+                    val nextTrigger = alarmScheduler.calculateNextTriggerTime(
+                        hour = classicCal.get(java.util.Calendar.HOUR_OF_DAY),
+                        minute = classicCal.get(java.util.Calendar.MINUTE),
+                        repeatDays = repeatDays,
+                        repeatIntervalWeeks = classicAlarm.repeatIntervalWeeks,
+                        fromTimeMs = targetMs
+                    )
+                    alarmDao.updateAlarm(classicAlarm.copy(targetTimeMs = nextTrigger, isActive = true))
+                    alarmScheduler.scheduleAlarm(nextTrigger, classicAlarm.id)
+                } else {
+                    alarmDao.updateAlarm(classicAlarm.copy(isActive = false))
+                    alarmDao.setAlarmActive(classicAlarm.id, false)
                 }
             }
         }
